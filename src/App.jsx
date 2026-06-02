@@ -101,6 +101,12 @@ function breakEvenBruta(cfg) {
 const $ = (n) => (isFinite(n) ? "$" + Math.round(n).toLocaleString("es-AR") : "—");
 const N = (n) => (isFinite(n) ? Math.round(n).toLocaleString("es-AR") : "—");
 const todayISO = () => new Date().toISOString().slice(0, 10);
+const tomorrowISO = () => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); };
+const DIAS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+const fechaCorta = (iso) => { const d = new Date(iso + "T00:00:00"); return `${DIAS[d.getDay()]} ${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`; };
+const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+const MESES_LARGO = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+const mesLabel = (key) => { const [y, m] = key.split("-"); return `${MESES[parseInt(m) - 1]} ${y}`; };
 
 function startOfWeek(d = new Date()) {
   const x = new Date(d);
@@ -112,7 +118,7 @@ function startOfWeek(d = new Date()) {
 
 const C = {
   bg: "#ffffff", panel: "#faf8f4", line: "#e6e2da", ink: "#1a1714",
-  ink2: "#7a736b", accent: "#b45309",
+  ink2: "#7a736b", accent: "#540c18",
   verde: "#15803d", amarillo: "#ca8a04", rojo: "#dc2626",
 };
 
@@ -163,13 +169,14 @@ function Kpi({ label, value, sub, color }) {
   );
 }
 
-function Field({ label, value, onChange, suffix, step = 1 }) {
+function Field({ label, value, onChange, suffix }) {
   return (
     <label style={{ display: "block" }}>
       <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
       <div className="inputWrap">
-        <input className="input" type="number" step={step} value={value}
-          onChange={(e) => onChange(e.target.value === "" ? 0 : parseFloat(e.target.value))} />
+        <input className="input" type="text" inputMode="decimal"
+          value={value === null || value === undefined ? "" : value}
+          onChange={(e) => onChange(e.target.value.replace(/[^0-9.]/g, ""))} />
         {suffix && <span style={{ color: C.ink2, fontSize: 13, paddingRight: 12 }}>{suffix}</span>}
       </div>
     </label>
@@ -183,9 +190,16 @@ export default function App() {
   const [cfg, setCfg] = useState(() => ({ ...DEFAULTS, ...load("arenera_cfg_v1", {}) }));
   const [registros, setRegistros] = useState(() => load("arenera_reg_v1", []));
   const [clientes, setClientes] = useState(() => load("arenera_cli_v1", []));
+  const [programadas, setProgramadas] = useState(() => load("arenera_prog_v1", []));
   const [modo, setModo] = useState("bruta");
   const [bateas, setBateas] = useState(DEFAULTS.objetivoSemana);
   const [showCfg, setShowCfg] = useState(false);
+  const [logoOk, setLogoOk] = useState(true);
+  const [cal, setCal] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const [importErr, setImportErr] = useState("");
+  const [pendingImport, setPendingImport] = useState(null);
+  const [cfgDraft, setCfgDraft] = useState(() => ({ ...DEFAULTS, ...load("arenera_cfg_v1", {}) }));
+  const [cfgSaved, setCfgSaved] = useState(false);
 
   // form de carga
   const [fFecha, setFFecha] = useState(todayISO());
@@ -194,17 +208,35 @@ export default function App() {
   const [fClienteId, setFClienteId] = useState("");
   const [fCanal, setFCanal] = useState("Socios");
 
+  // form de programar carga
+  const [pFecha, setPFecha] = useState(tomorrowISO());
+  const [pClienteId, setPClienteId] = useState("");
+  const [pBateas, setPBateas] = useState(1);
+  const [pModo, setPModo] = useState("bruta");
+  const [pNota, setPNota] = useState("");
+
   // form de cliente
   const [cNombre, setCNombre] = useState("");
   const [cLocalidad, setCLocalidad] = useState("");
   const [cTel, setCTel] = useState("");
   const [cCanal, setCCanal] = useState("Socios");
 
+  useEffect(() => save("arenera_prog_v1", programadas), [programadas]);
+
   useEffect(() => save("arenera_cfg_v1", cfg), [cfg]);
   useEffect(() => save("arenera_reg_v1", registros), [registros]);
   useEffect(() => save("arenera_cli_v1", clientes), [clientes]);
 
-  const setC = (k) => (v) => setCfg((c) => ({ ...c, [k]: v }));
+  const setD = (k) => (v) => { setCfgDraft((d) => ({ ...d, [k]: v })); setCfgSaved(false); };
+  const normCfg = (obj) => { const o = {}; for (const k in obj) { const v = obj[k]; o[k] = typeof v === "number" ? v : (parseFloat(v) || 0); } return o; };
+  const cfgDirty = useMemo(() => JSON.stringify(normCfg(cfgDraft)) !== JSON.stringify(cfg), [cfgDraft, cfg]);
+  function guardarCfg() {
+    const norm = normCfg(cfgDraft);
+    setCfg(norm);
+    setCfgDraft(norm);
+    setCfgSaved(true);
+    setTimeout(() => setCfgSaved(false), 2500);
+  }
 
   const dia = useMemo(() => calcDia(cfg, modo, bateas), [cfg, modo, bateas]);
   const beG = useMemo(() => breakEvenGrillada(cfg), [cfg]);
@@ -240,6 +272,8 @@ export default function App() {
 
   // alertas
   const alertas = [];
+  if (pendientesConfirmar > 0)
+    alertas.push({ color: C.accent, t: `${pendientesConfirmar} carga(s) para confirmar`, d: "Llegó el día de cargas programadas. Confirmá si se hicieron o descartalas en 'Cargas programadas'." });
   if (cfg.precioBruta <= beB * 1.15)
     alertas.push({ color: C.rojo, t: "Precio cerca de pérdida", d: `La bruta no rinde por debajo de ~${$(beB)}/tn. Estás en zona de riesgo.` });
   if (cfg.precioGrillada === cfg.precioBruta)
@@ -267,21 +301,113 @@ export default function App() {
     }).sort((a, b) => b.margen - a.margen);
   }, [clientes, registros, cfg]);
 
+  // resumen por mes (más reciente arriba)
+  const resumenMeses = useMemo(() => {
+    const map = {};
+    for (const r of registros) {
+      const key = r.fecha.slice(0, 7);
+      const c = calcDia(cfg, r.modo, r.bateas);
+      if (!map[key]) map[key] = { key, tn: 0, bruto: 0, comision: 0, costo: 0, margen: 0, bateas: 0, cargas: 0 };
+      const o = map[key];
+      o.tn += c.tn; o.bruto += c.ingresoBruto; o.comision += c.comision;
+      o.costo += c.costoTotal; o.margen += c.margen; o.bateas += r.bateas; o.cargas += 1;
+    }
+    return Object.values(map).sort((a, b) => (a.key < b.key ? 1 : -1));
+  }, [registros, cfg]);
+
+  // datos del calendario del mes visible
+  const calData = useMemo(() => {
+    const days = {};
+    for (const r of registros) {
+      const d = new Date(r.fecha + "T00:00:00");
+      if (d.getFullYear() === cal.y && d.getMonth() === cal.m) {
+        const day = d.getDate();
+        const c = calcDia(cfg, r.modo, r.bateas);
+        if (!days[day]) days[day] = { tn: 0, bateas: 0, cargas: 0 };
+        days[day].tn += c.tn; days[day].bateas += r.bateas; days[day].cargas += 1;
+      }
+    }
+    const offset = (new Date(cal.y, cal.m, 1).getDay() + 6) % 7;
+    const ndays = new Date(cal.y, cal.m + 1, 0).getDate();
+    const vals = Object.values(days).map((d) => d.tn);
+    const maxTn = vals.length ? Math.max(...vals) : 1;
+    const tnMes = vals.reduce((a, b) => a + b, 0);
+    return { days, offset, ndays, maxTn, tnMes };
+  }, [registros, cfg, cal]);
+
+  // picos de extracción (últimos 12 meses, tn por mes)
+  const picos = useMemo(() => {
+    const arr = [...resumenMeses].sort((a, b) => (a.key < b.key ? -1 : 1)).slice(-12);
+    const max = arr.length ? Math.max(...arr.map((m) => m.tn)) : 1;
+    return { arr, max };
+  }, [resumenMeses]);
+
+  function calNav(delta) {
+    setCal((c) => { let m = c.m + delta, y = c.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } return { y, m }; });
+  }
+
   // proyección
   const proySem = calcDia(cfg, modo, cfg.objetivoSemana).margen;
   const proyMes = proySem * 4.33, proyAnio = proySem * 52;
 
   function registrar() {
-    if (!fBateas || fBateas <= 0 || !fClienteId) return;
+    const b = parseFloat(fBateas) || 0;
+    if (b <= 0 || !fClienteId) return;
     const cl = clientes.find((c) => String(c.id) === String(fClienteId));
     setRegistros((rs) => [
-      { id: Date.now(), fecha: fFecha, modo: fModo, bateas: fBateas,
+      { id: Date.now(), fecha: fFecha, modo: fModo, bateas: b,
         clienteId: fClienteId, cliente: cl ? cl.nombre : "—", canal: fCanal },
       ...rs,
     ]);
     setFBateas(1);
   }
   function borrar(id) { setRegistros((rs) => rs.filter((r) => r.id !== id)); }
+
+  function programar() {
+    const b = parseFloat(pBateas) || 0;
+    if (b <= 0 || !pClienteId || !pFecha) return;
+    const cl = clientes.find((c) => String(c.id) === String(pClienteId));
+    setProgramadas((ps) => [
+      ...ps,
+      { id: Date.now(), fecha: pFecha, clienteId: pClienteId, cliente: cl ? cl.nombre : "—",
+        canal: cl ? cl.canal : "Socios", bateas: b, modo: pModo, nota: pNota.trim() },
+    ]);
+    setPBateas(1); setPNota(""); setPClienteId("");
+  }
+  function descartarProgramada(id) { setProgramadas((ps) => ps.filter((p) => p.id !== id)); }
+  function registrarProgramada(p) {
+    setRegistros((rs) => [
+      { id: Date.now(), fecha: p.fecha, modo: p.modo, bateas: p.bateas,
+        clienteId: p.clienteId, cliente: p.cliente, canal: p.canal },
+      ...rs,
+    ]);
+    setProgramadas((ps) => ps.filter((x) => x.id !== p.id));
+  }
+  function mensajeProg(p) {
+    const tn = (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
+    let m = `*Carga El Retiro* — ${fechaCorta(p.fecha)}\n`;
+    m += `Cliente: ${p.cliente}\n`;
+    m += `${p.bateas} batea(s) · arena ${p.modo}\n`;
+    m += `Total: ${N(tn)} tn`;
+    if (p.nota) m += `\nNota: ${p.nota}`;
+    return m;
+  }
+  function enviarOperario(p) {
+    const txt = mensajeProg(p);
+    try {
+      if (navigator.share) { navigator.share({ text: txt }).catch(() => {}); return; }
+    } catch {}
+    window.open("https://wa.me/?text=" + encodeURIComponent(txt), "_blank");
+  }
+
+  const programadasSort = useMemo(
+    () => [...programadas].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)),
+    [programadas]
+  );
+  const pendientesConfirmar = useMemo(
+    () => programadas.filter((p) => p.fecha <= todayISO()).length,
+    [programadas]
+  );
 
   function agregarCliente() {
     if (!cNombre.trim()) return;
@@ -297,6 +423,45 @@ export default function App() {
     setFClienteId(id);
     const cl = clientes.find((c) => String(c.id) === String(id));
     if (cl) setFCanal(cl.canal);
+  }
+
+  function exportar() {
+    try {
+      const data = { app: "El Retiro", version: 1, fecha: new Date().toISOString(), cfg, registros, clientes, programadas };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `el-retiro-respaldo-${todayISO()}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      setImportErr("");
+    } catch { setImportErr("No se pudo exportar en este navegador."); }
+  }
+
+  function archivoElegido(e) {
+    setImportErr("");
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data || !Array.isArray(data.registros)) throw new Error();
+        setPendingImport(data);
+      } catch { setImportErr("El archivo no es un respaldo válido de El Retiro."); }
+    };
+    reader.onerror = () => setImportErr("No se pudo leer el archivo.");
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  function confirmarImport() {
+    if (!pendingImport) return;
+    if (pendingImport.cfg) { const nc = { ...DEFAULTS, ...pendingImport.cfg }; setCfg(nc); setCfgDraft(nc); }
+    setRegistros(Array.isArray(pendingImport.registros) ? pendingImport.registros : []);
+    setClientes(Array.isArray(pendingImport.clientes) ? pendingImport.clientes : []);
+    setProgramadas(Array.isArray(pendingImport.programadas) ? pendingImport.programadas : []);
+    setPendingImport(null);
   }
 
   return (
@@ -334,11 +499,23 @@ export default function App() {
         .pill { font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; padding:3px 8px; border-radius:20px; }
         .del { border:0; background:transparent; color:${C.ink2}; cursor:pointer; font-size:16px; line-height:1; }
         .del:hover { color:${C.rojo}; }
+        .navbtn { border:1px solid ${C.line}; background:${C.bg}; color:${C.ink}; cursor:pointer; width:32px; height:32px; border-radius:8px; font-size:18px; line-height:1; }
+        .navbtn:hover { border-color:${C.accent}; color:${C.accent}; }
+        .cal { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
+        .cal-h { font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:0.06em; text-transform:uppercase; color:${C.ink2}; text-align:center; padding-bottom:2px; }
+        .cal-d { aspect-ratio:1; border:1px solid ${C.line}; border-radius:9px; padding:6px; display:flex; flex-direction:column; justify-content:space-between; overflow:hidden; }
+        .cal-d.empty { border:0; }
+        .barswrap { overflow-x:auto; }
+        .bars { display:flex; align-items:flex-end; gap:10px; height:180px; min-width:100%; padding-top:18px; }
+        .bar-col { flex:1; min-width:36px; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; position:relative; }
+        .bar { width:100%; border-radius:6px 6px 0 0; min-height:3px; }
         @media (max-width:860px){
           .grid-kpi{ grid-template-columns:repeat(2,1fr);} .grid-2{ grid-template-columns:1fr;}
           .grid-3{ grid-template-columns:1fr;} .grid-form{ grid-template-columns:1fr 1fr;}
         }
         @media (max-width:560px){
+          .cal { gap:4px; }
+          .cal-d { padding:4px; border-radius:7px; }
           .app{ padding:16px 12px 64px; }
           .card{ padding:16px; border-radius:14px; }
           .grid-kpi{ grid-template-columns:1fr 1fr; gap:10px; }
@@ -364,10 +541,17 @@ export default function App() {
       <div className="app">
         {/* HEADER */}
         <header style={{ marginBottom: 24, paddingBottom: 20, borderBottom: `2px solid ${C.ink}` }}>
-          <div className="label" style={{ color: C.accent, marginBottom: 6 }}>ARENERA · SOL DE JULIO · STGO. DEL ESTERO</div>
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
-            <h1 style={{ margin: 0, fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 38, letterSpacing: "-0.03em" }}>Panel de control</h1>
-            <button className="tog" onClick={() => setShowCfg((s) => !s)}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
+            <div>
+              {logoOk ? (
+                <img src="/logo.png" alt="El Retiro" onError={() => setLogoOk(false)}
+                  style={{ width: "min(230px, 62vw)", height: "auto", display: "block" }} />
+              ) : (
+                <h1 style={{ margin: 0, fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 38, letterSpacing: "-0.03em", color: C.accent }}>EL RETIRO</h1>
+              )}
+              <div className="label" style={{ color: C.accent, marginTop: 10 }}>Panel de control · Arenera · Sol de Julio</div>
+            </div>
+            <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
           </div>
         </header>
 
@@ -509,6 +693,74 @@ export default function App() {
           )}
         </Section>
 
+        {/* CARGAS PROGRAMADAS */}
+        <Section tag="Agenda" title="Cargas programadas"
+          right={<span className="label">{programadas.length} en agenda</span>}>
+          <div className="grid-form" style={{ marginBottom: 20 }}>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Día</span>
+              <div className="inputWrap">
+                <input className="input" type="date" value={pFecha} onChange={(e) => setPFecha(e.target.value)} />
+              </div>
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cliente</span>
+              <div className="inputWrap selectWrap">
+                <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={pClienteId} onChange={(e) => setPClienteId(e.target.value)}>
+                  <option value="">{clientes.length ? "Elegí…" : "Agregá un cliente ↓"}</option>
+                  {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre}{c.localidad ? ` · ${c.localidad}` : ""}</option>)}
+                </select>
+              </div>
+            </label>
+            <Field label="Bateas" value={pBateas} onChange={setPBateas} />
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Modo</span>
+              <div className="inputWrap selectWrap">
+                <select className="input" value={pModo} onChange={(e) => setPModo(e.target.value)}>
+                  <option value="bruta">Bruta</option><option value="grillada">Grillada</option>
+                </select>
+              </div>
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Nota</span>
+              <div className="inputWrap">
+                <input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={pNota} placeholder="opcional…" onChange={(e) => setPNota(e.target.value)} />
+              </div>
+            </label>
+          </div>
+          <button className="btn" style={{ marginBottom: 18 }} onClick={programar}>+ Programar carga</button>
+
+          {programadasSort.length === 0 ? (
+            <div style={{ color: C.ink2, fontSize: 14, padding: "8px 0" }}>No tenés cargas agendadas. Programá la próxima arriba y mandásela al palero.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 12 }}>
+              {programadasSort.map((p) => {
+                const hoy = todayISO();
+                const estado = p.fecha < hoy ? { c: C.rojo, t: "Pendiente de confirmar" } : p.fecha === hoy ? { c: C.amarillo, t: "Es hoy" } : { c: C.accent, t: "Programada" };
+                const tn = (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
+                return (
+                  <div key={p.id} style={{ border: `1px solid ${C.line}`, borderLeft: `4px solid ${estado.c}`, borderRadius: 12, padding: "14px 16px", display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+                    <div style={{ minWidth: 180 }}>
+                      <div className="row" style={{ gap: 10, alignItems: "center", marginBottom: 4 }}>
+                        <span className="num" style={{ fontSize: 15, color: C.ink }}>{fechaCorta(p.fecha)}</span>
+                        <span className="pill" style={{ background: `${estado.c}1a`, color: estado.c }}>{estado.t}</span>
+                      </div>
+                      <div style={{ fontWeight: 600, fontSize: 14.5 }}>{p.cliente}</div>
+                      <div className="num" style={{ fontSize: 12.5, color: C.ink2, marginTop: 2 }}>{p.bateas} batea(s) · {p.modo} · {N(tn)} tn</div>
+                      {p.nota && <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 4, fontStyle: "italic" }}>“{p.nota}”</div>}
+                    </div>
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
+                      <button className="tog" onClick={() => enviarOperario(p)}>Enviar al palero</button>
+                      <button className="tog" style={{ background: C.verde, color: "#fff", borderColor: C.verde }} onClick={() => registrarProgramada(p)}>Se hizo → registrar</button>
+                      <button className="tog" onClick={() => descartarProgramada(p.id)}>No se hizo</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Section>
+
         {/* REGISTRO DE CARGAS */}
         <Section tag="Operación" title="Registro de cargas">
           <div className="grid-form" style={{ marginBottom: 20 }}>
@@ -575,6 +827,87 @@ export default function App() {
           )}
         </Section>
 
+        {/* RESUMEN POR MES */}
+        <Section tag="Resumen" title="Mes por mes">
+          {resumenMeses.length === 0 ? (
+            <div style={{ color: C.ink2, fontSize: 14, padding: "8px 0" }}>El resumen se arma solo a medida que registrás cargas.</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table className="reg">
+                <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Bateas</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Ingreso</th><th style={{ textAlign: "right" }}>Socios</th><th style={{ textAlign: "right" }}>Margen</th></tr></thead>
+                <tbody>
+                  {resumenMeses.map((m) => (
+                    <tr key={m.key}>
+                      <td data-label="Mes" style={{ fontWeight: 600 }}>{mesLabel(m.key)}</td>
+                      <td data-label="Bateas" className="num" style={{ textAlign: "right" }}>{m.bateas}</td>
+                      <td data-label="Tn" className="num" style={{ textAlign: "right" }}>{N(m.tn)}</td>
+                      <td data-label="Ingreso" className="num" style={{ textAlign: "right" }}>{$(m.bruto)}</td>
+                      <td data-label="Socios" className="num" style={{ textAlign: "right", color: C.rojo }}>−{N(m.comision)}</td>
+                      <td data-label="Margen" className="num" style={{ textAlign: "right", color: m.margen >= 0 ? C.verde : C.rojo, fontWeight: 700 }}>{$(m.margen)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
+
+        {/* CALENDARIO */}
+        <Section tag="Calendario" title="Días de carga"
+          right={
+            <div className="row" style={{ gap: 8, alignItems: "center" }}>
+              <button className="navbtn" onClick={() => calNav(-1)}>‹</button>
+              <span className="num" style={{ fontSize: 13, minWidth: 104, textAlign: "center" }}>{MESES_LARGO[cal.m]} {cal.y}</span>
+              <button className="navbtn" onClick={() => calNav(1)}>›</button>
+            </div>
+          }>
+          <div className="cal" style={{ marginBottom: 8 }}>
+            {["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map((d) => <div key={d} className="cal-h">{d}</div>)}
+            {Array.from({ length: calData.offset }).map((_, i) => <div key={"e" + i} className="cal-d empty" />)}
+            {Array.from({ length: calData.ndays }).map((_, i) => {
+              const day = i + 1;
+              const info = calData.days[day];
+              const ratio = info ? info.tn / calData.maxTn : 0;
+              const alpha = info ? 0.6 + 0.4 * ratio : 0;
+              return (
+                <div key={day} className="cal-d"
+                  title={info ? `${N(info.tn)} tn · ${info.bateas} bateas` : ""}
+                  style={{ background: info ? `rgba(84,12,24,${alpha})` : C.bg, borderColor: info ? C.accent : C.line }}>
+                  <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 600, color: info ? "#fff" : C.ink2 }}>{day}</span>
+                  {info && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5, fontWeight: 700, color: "#fff", lineHeight: 1.1 }}>{N(info.tn)} tn</span>}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ color: C.ink2, fontSize: 12.5, marginTop: 12 }}>
+            Total del mes: <span className="num" style={{ color: C.ink }}>{N(calData.tnMes)} tn</span>. Más oscuro = más toneladas ese día.
+          </div>
+        </Section>
+
+        {/* TABLERO DE PICOS */}
+        <Section tag="Tablero" title="Picos de extracción"
+          right={<span className="label">tn por mes</span>}>
+          {picos.arr.length === 0 ? (
+            <div style={{ color: C.ink2, fontSize: 14, padding: "8px 0" }}>Cuando tengas cargas en distintos meses, vas a ver acá las barras y el mes pico.</div>
+          ) : (
+            <div className="barswrap">
+              <div className="bars">
+                {picos.arr.map((m) => {
+                  const h = Math.max(3, (m.tn / picos.max) * 150);
+                  const esPico = m.tn === picos.max;
+                  return (
+                    <div key={m.key} className="bar-col" title={`${mesLabel(m.key)} · ${N(m.tn)} tn`}>
+                      <span className="num" style={{ fontSize: 10.5, color: esPico ? C.accent : C.ink2, marginBottom: 4, fontWeight: 700 }}>{N(m.tn)}</span>
+                      <div className="bar" style={{ height: h, background: esPico ? C.accent : `${C.accent}40` }} />
+                      <span className="num" style={{ fontSize: 9.5, color: C.ink2, marginTop: 6, textAlign: "center" }}>{MESES[parseInt(m.key.split("-")[1]) - 1]}<br />{m.key.split("-")[0].slice(2)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </Section>
+
         {/* PROYECCIÓN */}
         <Section tag="Proyección" title={`Si cargás ${cfg.objetivoSemana} bateas/semana (${modo})`}>
           <div className="grid-3">
@@ -587,29 +920,63 @@ export default function App() {
         {/* CONFIGURACIÓN */}
         {showCfg && (
           <Section tag="Parámetros" title="Supuestos editables"
-            right={<button className="tog" onClick={() => setCfg({ ...DEFAULTS })}>Restablecer</button>}>
+            right={<button className="tog" onClick={() => setCfgDraft({ ...DEFAULTS })}>Restablecer</button>}>
             <div className="grid-3" style={{ rowGap: 16 }}>
-              <Field label="Precio bruta" value={cfg.precioBruta} onChange={setC("precioBruta")} suffix="$/tn" step={100} />
-              <Field label="Precio grillada" value={cfg.precioGrillada} onChange={setC("precioGrillada")} suffix="$/tn" step={100} />
-              <Field label="Comisión socios" value={cfg.comisionSocios} onChange={setC("comisionSocios")} suffix="%" />
-              <Field label="Tn por batea" value={cfg.tnPorBatea} onChange={setC("tnPorBatea")} suffix="tn" />
-              <Field label="Objetivo semanal" value={cfg.objetivoSemana} onChange={setC("objetivoSemana")} suffix="bateas" />
-              <Field label="Regalía" value={cfg.regalia} onChange={setC("regalia")} suffix="%" />
-              <Field label="Gasoil" value={cfg.gasoilPrecio} onChange={setC("gasoilPrecio")} suffix="$/L" step={50} />
-              <Field label="Consumo pala" value={cfg.palaConsumo} onChange={setC("palaConsumo")} suffix="L/h" step={0.5} />
-              <Field label="Reserva pala" value={cfg.palaReserva} onChange={setC("palaReserva")} suffix="$/h" step={500} />
-              <Field label="Jornal" value={cfg.jornal} onChange={setC("jornal")} suffix="$/día" step={1000} />
-              <Field label="Horas pala (bruta)" value={cfg.horasPalaBruta} onChange={setC("horasPalaBruta")} suffix="h" step={0.5} />
-              <Field label="Horas pala (grillada)" value={cfg.horasPalaGrillada} onChange={setC("horasPalaGrillada")} suffix="h" step={0.5} />
-              <Field label="Jornales (bruta)" value={cfg.jornalesBruta} onChange={setC("jornalesBruta")} />
-              <Field label="Jornales (grillada)" value={cfg.jornalesGrillada} onChange={setC("jornalesGrillada")} />
-              <Field label="Costo grilla" value={cfg.costoGrilla} onChange={setC("costoGrilla")} suffix="$" step={50000} />
+              <Field label="Precio bruta" value={cfgDraft.precioBruta} onChange={setD("precioBruta")} suffix="$/tn" step={100} />
+              <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" step={100} />
+              <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
+              <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
+              <Field label="Objetivo semanal" value={cfgDraft.objetivoSemana} onChange={setD("objetivoSemana")} suffix="bateas" />
+              <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
+              <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
+              <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" step={0.5} />
+              <Field label="Reserva pala" value={cfgDraft.palaReserva} onChange={setD("palaReserva")} suffix="$/h" step={500} />
+              <Field label="Jornal" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" step={1000} />
+              <Field label="Horas pala (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" step={0.5} />
+              <Field label="Horas pala (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
+              <Field label="Jornales (bruta)" value={cfgDraft.jornalesBruta} onChange={setD("jornalesBruta")} />
+              <Field label="Jornales (grillada)" value={cfgDraft.jornalesGrillada} onChange={setD("jornalesGrillada")} />
+              <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" step={50000} />
+            </div>
+            <div className="row" style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.line}`, alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <button className="btn" style={{ background: cfgDirty ? C.accent : C.ink2, cursor: cfgDirty ? "pointer" : "default" }} disabled={!cfgDirty} onClick={guardarCfg}>Guardar supuestos</button>
+              {cfgSaved && <span className="num" style={{ fontSize: 13, color: C.verde }}>✓ Guardado</span>}
+              {!cfgSaved && cfgDirty && <span className="num" style={{ fontSize: 13, color: C.amarillo }}>Cambios sin guardar</span>}
+              {!cfgSaved && !cfgDirty && <span style={{ fontSize: 13, color: C.ink2 }}>Los números de toda la app usan estos valores guardados.</span>}
             </div>
           </Section>
         )}
 
+        {/* RESPALDO */}
+        <Section tag="Datos" title="Respaldo"
+          right={<span className="label">{registros.length} cargas · {clientes.length} clientes</span>}>
+          <div style={{ color: C.ink2, fontSize: 13.5, marginBottom: 16, lineHeight: 1.5 }}>
+            Exportá un archivo con todas tus cargas y clientes para tenerlo a salvo (guardalo en el teléfono o mandátelo por WhatsApp). Si cambiás de celular o se borran los datos, lo importás y recuperás todo.
+          </div>
+          <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+            <button className="btn" onClick={exportar}>↓ Exportar respaldo</button>
+            <button className="btn" style={{ background: C.bg, color: C.ink, border: `1px solid ${C.line}` }} onClick={() => document.getElementById("importFile").click()}>↑ Importar respaldo</button>
+            <input id="importFile" type="file" accept="application/json,.json" style={{ display: "none" }} onChange={archivoElegido} />
+          </div>
+
+          {importErr && <div style={{ marginTop: 14, color: C.rojo, fontSize: 13, fontWeight: 600 }}>{importErr}</div>}
+
+          {pendingImport && (
+            <div style={{ marginTop: 14, background: `${C.amarillo}12`, borderLeft: `4px solid ${C.amarillo}`, borderRadius: 10, padding: "14px 16px" }}>
+              <div style={{ fontWeight: 700, fontSize: 14.5 }}>¿Reemplazar los datos actuales?</div>
+              <div style={{ fontSize: 13, color: C.ink2, margin: "4px 0 12px" }}>
+                El respaldo trae {pendingImport.registros.length} cargas y {(pendingImport.clientes || []).length} clientes. Esto reemplaza lo que tenés ahora en este dispositivo.
+              </div>
+              <div className="row" style={{ gap: 10 }}>
+                <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={confirmarImport}>Confirmar</button>
+                <button className="tog" onClick={() => setPendingImport(null)}>Cancelar</button>
+              </div>
+            </div>
+          )}
+        </Section>
+
         <footer style={{ marginTop: 28, color: C.ink2, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.04em" }}>
-          Los números se recalculan solos al editar supuestos. Datos guardados en este dispositivo.
+          Los supuestos se aplican al apretar Guardar. Datos guardados en este dispositivo — exportá un respaldo cada tanto.
         </footer>
       </div>
     </div>
