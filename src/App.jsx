@@ -31,8 +31,7 @@ const DEFAULTS = {
 /* ────────────────────────────────────────────────────────────
    MOTOR DE CÁLCULO
    ──────────────────────────────────────────────────────────── */
-function calcDia(cfg, modo, bateas) {
-  const tn = bateas * cfg.tnPorBatea;
+function calcDia(cfg, modo, tn) {
   const precio = modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta;
   const ingresoBruto = tn * precio;
   const comision = ingresoBruto * (cfg.comisionSocios / 100);
@@ -53,7 +52,7 @@ function calcDia(cfg, modo, bateas) {
   return {
     tn, precio, ingresoBruto, comision, regaliaMonto, ingresoNeto,
     gasoil, reserva, manoObra, varios, amortGrilla, costoTotal,
-    margen, margenTn: tn ? margen / tn : 0, margenBatea: bateas ? margen / bateas : 0,
+    margen, margenTn: tn ? margen / tn : 0,
   };
 }
 
@@ -64,7 +63,7 @@ function amortGrillaTn(cfg) {
 
 // neto $/tn de cada modo, a la escala del objetivo semanal
 function netoTn(cfg, modo) {
-  const r = calcDia(cfg, modo, cfg.objetivoSemana);
+  const r = calcDia(cfg, modo, cfg.objetivoSemana * cfg.tnPorBatea);
   return r.margenTn;
 }
 
@@ -205,13 +204,16 @@ export default function App() {
   const [fFecha, setFFecha] = useState(todayISO());
   const [fModo, setFModo] = useState("bruta");
   const [fBateas, setFBateas] = useState(1);
+  const [fTn, setFTn] = useState(DEFAULTS.tnPorBatea);
   const [fClienteId, setFClienteId] = useState("");
   const [fCanal, setFCanal] = useState("Socios");
+  const [fFromProg, setFFromProg] = useState(null);
 
   // form de programar carga
   const [pFecha, setPFecha] = useState(tomorrowISO());
   const [pClienteId, setPClienteId] = useState("");
   const [pBateas, setPBateas] = useState(1);
+  const [pTn, setPTn] = useState(DEFAULTS.tnPorBatea);
   const [pModo, setPModo] = useState("bruta");
   const [pNota, setPNota] = useState("");
 
@@ -238,7 +240,10 @@ export default function App() {
     setTimeout(() => setCfgSaved(false), 2500);
   }
 
-  const dia = useMemo(() => calcDia(cfg, modo, bateas), [cfg, modo, bateas]);
+  // toneladas de una carga: usa las guardadas, o estima por batea estándar (compatibilidad)
+  const regTn = (r) => (r.tn != null ? r.tn : (parseFloat(r.bateas) || 0) * cfg.tnPorBatea);
+
+  const dia = useMemo(() => calcDia(cfg, modo, bateas * cfg.tnPorBatea), [cfg, modo, bateas]);
   const beG = useMemo(() => breakEvenGrillada(cfg), [cfg]);
   const beB = useMemo(() => breakEvenBruta(cfg), [cfg]);
   const netoB = useMemo(() => netoTn(cfg, "bruta"), [cfg]);
@@ -258,7 +263,7 @@ export default function App() {
     let tnMes = 0, ingMes = 0, comMes = 0, costoMes = 0, margenMes = 0, tnDir = 0, batSem = 0;
     for (const r of registros) {
       const d = new Date(r.fecha + "T00:00:00");
-      const calc = calcDia(cfg, r.modo, r.bateas);
+      const calc = calcDia(cfg, r.modo, regTn(r));
       if (d.getMonth() === m && d.getFullYear() === y) {
         tnMes += calc.tn; ingMes += calc.ingresoBruto; comMes += calc.comision;
         costoMes += calc.costoTotal; margenMes += calc.margen;
@@ -302,7 +307,7 @@ export default function App() {
       let tn = 0, margen = 0, cargas = 0, ultima = null;
       for (const r of registros) {
         if (r.clienteId !== cl.id) continue;
-        const c = calcDia(cfg, r.modo, r.bateas);
+        const c = calcDia(cfg, r.modo, regTn(r));
         tn += c.tn; margen += c.margen; cargas += 1;
         if (!ultima || r.fecha > ultima) ultima = r.fecha;
       }
@@ -315,7 +320,7 @@ export default function App() {
     const map = {};
     for (const r of registros) {
       const key = r.fecha.slice(0, 7);
-      const c = calcDia(cfg, r.modo, r.bateas);
+      const c = calcDia(cfg, r.modo, regTn(r));
       if (!map[key]) map[key] = { key, tn: 0, bruto: 0, comision: 0, costo: 0, margen: 0, bateas: 0, cargas: 0 };
       const o = map[key];
       o.tn += c.tn; o.bruto += c.ingresoBruto; o.comision += c.comision;
@@ -331,7 +336,7 @@ export default function App() {
       const d = new Date(r.fecha + "T00:00:00");
       if (d.getFullYear() === cal.y && d.getMonth() === cal.m) {
         const day = d.getDate();
-        const c = calcDia(cfg, r.modo, r.bateas);
+        const c = calcDia(cfg, r.modo, regTn(r));
         if (!days[day]) days[day] = { tn: 0, bateas: 0, cargas: 0 };
         days[day].tn += c.tn; days[day].bateas += r.bateas; days[day].cargas += 1;
       }
@@ -356,44 +361,57 @@ export default function App() {
   }
 
   // proyección
-  const proySem = calcDia(cfg, modo, cfg.objetivoSemana).margen;
+  const proySem = calcDia(cfg, modo, cfg.objetivoSemana * cfg.tnPorBatea).margen;
   const proyMes = proySem * 4.33, proyAnio = proySem * 52;
+
+  // al cambiar bateas, autocompleta toneladas con la batea estándar (editable aparte)
+  const setBateasReg = (v) => { setFBateas(v); setFTn(String((parseFloat(v) || 0) * cfg.tnPorBatea)); };
+  const setBateasProg = (v) => { setPBateas(v); setPTn(String((parseFloat(v) || 0) * cfg.tnPorBatea)); };
+
+  function resetFormCarga() {
+    setFBateas(1); setFTn(cfg.tnPorBatea); setFFromProg(null);
+  }
 
   function registrar() {
     const b = parseFloat(fBateas) || 0;
-    if (b <= 0 || !fClienteId) return;
+    const tn = parseFloat(fTn) || 0;
+    if (tn <= 0 || !fClienteId) return;
     const cl = clientes.find((c) => String(c.id) === String(fClienteId));
     setRegistros((rs) => [
-      { id: Date.now(), fecha: fFecha, modo: fModo, bateas: b,
+      { id: Date.now(), fecha: fFecha, modo: fModo, bateas: b, tn,
         clienteId: fClienteId, cliente: cl ? cl.nombre : "—", canal: fCanal },
       ...rs,
     ]);
-    setFBateas(1);
+    if (fFromProg) setProgramadas((ps) => ps.filter((x) => x.id !== fFromProg));
+    resetFormCarga();
   }
   function borrar(id) { setRegistros((rs) => rs.filter((r) => r.id !== id)); }
 
   function programar() {
     const b = parseFloat(pBateas) || 0;
-    if (b <= 0 || !pClienteId || !pFecha) return;
+    const tn = parseFloat(pTn) || 0;
+    if (tn <= 0 || !pClienteId || !pFecha) return;
     const cl = clientes.find((c) => String(c.id) === String(pClienteId));
     setProgramadas((ps) => [
       ...ps,
       { id: Date.now(), fecha: pFecha, clienteId: pClienteId, cliente: cl ? cl.nombre : "—",
-        canal: cl ? cl.canal : "Socios", bateas: b, modo: pModo, nota: pNota.trim() },
+        canal: cl ? cl.canal : "Socios", bateas: b, tn, modo: pModo, nota: pNota.trim() },
     ]);
-    setPBateas(1); setPNota(""); setPClienteId("");
+    setPBateas(1); setPTn(cfg.tnPorBatea); setPNota(""); setPClienteId("");
   }
   function descartarProgramada(id) { setProgramadas((ps) => ps.filter((p) => p.id !== id)); }
-  function registrarProgramada(p) {
-    setRegistros((rs) => [
-      { id: Date.now(), fecha: p.fecha, modo: p.modo, bateas: p.bateas,
-        clienteId: p.clienteId, cliente: p.cliente, canal: p.canal },
-      ...rs,
-    ]);
-    setProgramadas((ps) => ps.filter((x) => x.id !== p.id));
+
+  // "Se hizo": pasa la carga al formulario de registro para confirmar/ajustar toneladas
+  function prepararDesdeProg(p) {
+    setFFecha(p.fecha); setFClienteId(p.clienteId); setFCanal(p.canal || "Socios");
+    setFModo(p.modo); setFBateas(p.bateas);
+    setFTn(p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea);
+    setFFromProg(p.id);
+    const el = document.getElementById("formCarga");
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }
   function mensajeProg(p) {
-    const tn = (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
+    const tn = p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
     let m = `*Carga El Retiro* — ${fechaCorta(p.fecha)}\n`;
     m += `Cliente: ${p.cliente}\n`;
     m += `${p.bateas} batea(s) · arena ${p.modo}\n`;
@@ -629,7 +647,7 @@ export default function App() {
               <span className="num" style={{ fontSize: 26, color: dia.margen >= 0 ? C.verde : C.rojo }}>{$(dia.margen)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", color: C.ink2, fontSize: 12.5, marginTop: 6 }}>
-              <span>{$(dia.margenBatea)} / batea</span><span>{$(dia.margenTn)} / tn</span>
+              <span>{$(bateas ? dia.margen / bateas : 0)} / batea</span><span>{$(dia.margenTn)} / tn</span>
             </div>
           </Section>
         </div>
@@ -712,7 +730,8 @@ export default function App() {
                 </select>
               </div>
             </label>
-            <Field label="Bateas" value={pBateas} onChange={setPBateas} />
+            <Field label="Bateas" value={pBateas} onChange={setBateasProg} />
+            <Field label="Toneladas" value={pTn} onChange={setPTn} suffix="tn" />
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Modo</span>
               <div className="inputWrap selectWrap">
@@ -737,7 +756,7 @@ export default function App() {
               {programadasSort.map((p) => {
                 const hoy = todayISO();
                 const estado = p.fecha < hoy ? { c: C.rojo, t: "Pendiente de confirmar" } : p.fecha === hoy ? { c: C.amarillo, t: "Es hoy" } : { c: C.accent, t: "Programada" };
-                const tn = (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
+                const tn = p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
                 return (
                   <div key={p.id} style={{ border: `1px solid ${C.line}`, borderLeft: `4px solid ${estado.c}`, borderRadius: 12, padding: "14px 16px", display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
                     <div style={{ minWidth: 180 }}>
@@ -751,7 +770,7 @@ export default function App() {
                     </div>
                     <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
                       <button className="tog" onClick={() => enviarOperario(p)}>Enviar al palero</button>
-                      <button className="tog" style={{ background: C.verde, color: "#fff", borderColor: C.verde }} onClick={() => registrarProgramada(p)}>Se hizo → registrar</button>
+                      <button className="tog" style={{ background: C.verde, color: "#fff", borderColor: C.verde }} onClick={() => prepararDesdeProg(p)}>Se hizo →</button>
                       <button className="tog" onClick={() => descartarProgramada(p.id)}>No se hizo</button>
                     </div>
                   </div>
@@ -763,7 +782,7 @@ export default function App() {
 
         {/* REGISTRO DE CARGAS */}
         <Section tag="Operación" title="Registro de cargas">
-          <div className="grid-form" style={{ marginBottom: 20 }}>
+          <div id="formCarga" className="grid-form" style={{ marginBottom: 20 }}>
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Fecha</span>
               <div className="inputWrap">
@@ -778,7 +797,8 @@ export default function App() {
                 </select>
               </div>
             </label>
-            <Field label="Bateas" value={fBateas} onChange={setFBateas} />
+            <Field label="Bateas" value={fBateas} onChange={setBateasReg} />
+            <Field label="Toneladas" value={fTn} onChange={setFTn} suffix="tn" />
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cliente</span>
               <div className="inputWrap selectWrap">
@@ -797,6 +817,11 @@ export default function App() {
               </div>
             </label>
           </div>
+          {fFromProg && (
+            <div style={{ background: `${C.amarillo}12`, borderLeft: `4px solid ${C.amarillo}`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: C.ink2 }}>
+              Viene de una carga programada. Revisá las <b>toneladas reales</b> (por si vino una batea más chica) y tocá Registrar.
+            </div>
+          )}
           <button className="btn" style={{ marginBottom: 18 }} onClick={registrar}>+ Registrar carga</button>
 
           {registros.length === 0 ? (
@@ -807,7 +832,7 @@ export default function App() {
                 <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>Cliente</th><th>Canal</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
                 <tbody>
                   {registros.map((r) => {
-                    const c = calcDia(cfg, r.modo, r.bateas);
+                    const c = calcDia(cfg, r.modo, regTn(r));
                     return (
                       <tr key={r.id}>
                         <td data-label="Fecha" className="num" style={{ fontSize: 12.5 }}>{r.fecha}</td>
