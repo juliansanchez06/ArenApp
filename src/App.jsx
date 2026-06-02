@@ -271,6 +271,15 @@ export default function App() {
   }, [registros, cfg]);
 
   // alertas
+  const programadasSort = useMemo(
+    () => [...programadas].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)),
+    [programadas]
+  );
+  const pendientesConfirmar = useMemo(
+    () => programadas.filter((p) => p.fecha <= todayISO()).length,
+    [programadas]
+  );
+
   const alertas = [];
   if (pendientesConfirmar > 0)
     alertas.push({ color: C.accent, t: `${pendientesConfirmar} carga(s) para confirmar`, d: "Llegó el día de cargas programadas. Confirmá si se hicieron o descartalas en 'Cargas programadas'." });
@@ -399,15 +408,6 @@ export default function App() {
     } catch {}
     window.open("https://wa.me/?text=" + encodeURIComponent(txt), "_blank");
   }
-
-  const programadasSort = useMemo(
-    () => [...programadas].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)),
-    [programadas]
-  );
-  const pendientesConfirmar = useMemo(
-    () => programadas.filter((p) => p.fecha <= todayISO()).length,
-    [programadas]
-  );
 
   function agregarCliente() {
     if (!cNombre.trim()) return;
