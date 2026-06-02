@@ -199,6 +199,7 @@ export default function App() {
   const [pendingImport, setPendingImport] = useState(null);
   const [cfgDraft, setCfgDraft] = useState(() => ({ ...DEFAULTS, ...load("arenera_cfg_v1", {}) }));
   const [cfgSaved, setCfgSaved] = useState(false);
+  const [mesSel, setMesSel] = useState("");
 
   // form de carga
   const [fFecha, setFFecha] = useState(todayISO());
@@ -329,6 +330,8 @@ export default function App() {
     return Object.values(map).sort((a, b) => (a.key < b.key ? 1 : -1));
   }, [registros, cfg]);
 
+  const mesActivo = mesSel || (resumenMeses[0] ? resumenMeses[0].key : "");
+
   // datos del calendario del mes visible
   const calData = useMemo(() => {
     const days = {};
@@ -443,15 +446,123 @@ export default function App() {
     if (cl) setFCanal(cl.canal);
   }
 
+  function descargar(nombre, contenido, tipo) {
+    const blob = new Blob([contenido], { type: tipo });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nombre;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportarResumenCSV() {
+    try {
+      const sep = ";";
+      const head = ["Mes", "Bateas", "Toneladas", "Ingreso bruto", "Comision socios", "Costo", "Margen"];
+      const filas = [...resumenMeses].sort((a, b) => (a.key < b.key ? -1 : 1)).map((m) => [
+        mesLabel(m.key), m.bateas, Math.round(m.tn), Math.round(m.bruto), Math.round(m.comision), Math.round(m.costo), Math.round(m.margen),
+      ]);
+      const csv = "\uFEFF" + [head, ...filas].map((r) => r.join(sep)).join("\n");
+      descargar(`el-retiro-resumen-${todayISO()}.csv`, csv, "text/csv;charset=utf-8;");
+    } catch {}
+  }
+
+  function dibujarResumen(key) {
+    const m = resumenMeses.find((x) => x.key === key);
+    if (!m) return null;
+    const W = 900, H = 700, s = 2;
+    const cv = document.createElement("canvas");
+    cv.width = W * s; cv.height = H * s;
+    const ctx = cv.getContext("2d");
+    ctx.scale(s, s);
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#540c18"; ctx.fillRect(0, 0, W, 12);
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "#540c18";
+    ctx.font = "800 42px Archivo, Arial, sans-serif";
+    ctx.fillText("EL RETIRO", 48, 88);
+    ctx.fillStyle = "#7a736b";
+    ctx.font = "600 17px 'IBM Plex Mono', monospace";
+    ctx.fillText("RESUMEN MENSUAL · SOL DE JULIO", 48, 116);
+    ctx.fillStyle = "#1a1714";
+    ctx.font = "800 36px Archivo, Arial, sans-serif";
+    ctx.fillText(mesLabel(key), 48, 176);
+    ctx.strokeStyle = "#e6e2da"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(48, 202); ctx.lineTo(W - 48, 202); ctx.stroke();
+
+    const rowOut = (y, label, value, opts = {}) => {
+      ctx.textAlign = "left";
+      ctx.fillStyle = opts.lblColor || "#7a736b";
+      ctx.font = (opts.big ? "700 " : "500 ") + (opts.big ? "26px" : "22px") + " Archivo, Arial, sans-serif";
+      ctx.fillText(label, 48, y);
+      ctx.textAlign = "right";
+      ctx.fillStyle = opts.valColor || "#1a1714";
+      ctx.font = "700 " + (opts.big ? "30px" : "24px") + " 'IBM Plex Mono', monospace";
+      ctx.fillText(value, W - 48, y);
+      ctx.textAlign = "left";
+    };
+
+    let y = 256;
+    rowOut(y, "Bateas cargadas", N(m.bateas)); y += 50;
+    rowOut(y, "Toneladas", `${N(m.tn)} tn`); y += 60;
+    ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, y - 24); ctx.lineTo(W - 48, y - 24); ctx.stroke();
+    rowOut(y, "Ingreso bruto", `$${N(m.bruto)}`); y += 50;
+    rowOut(y, "Comisión socios", `− $${N(m.comision)}`, { valColor: "#dc2626" }); y += 50;
+    rowOut(y, "Costo operativo", `− $${N(m.costo)}`, { valColor: "#dc2626" }); y += 70;
+
+    ctx.fillStyle = "#540c1810"; ctx.fillRect(40, y - 44, W - 80, 64);
+    rowOut(y, "Margen del mes", `$${N(m.margen)}`, { big: true, lblColor: "#1a1714", valColor: m.margen >= 0 ? "#15803d" : "#dc2626" });
+
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#7a736b";
+    ctx.font = "500 14px 'IBM Plex Mono', monospace";
+    ctx.fillText(`Generado ${todayISO()} · ${m.cargas} carga(s) en el mes`, 48, H - 36);
+    return cv;
+  }
+
+  async function esperarFuentes() { try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch {} }
+
+  async function compartirImagen() {
+    if (!mesActivo) return;
+    await esperarFuentes();
+    const cv = dibujarResumen(mesActivo);
+    if (!cv) return;
+    cv.toBlob(async (blob) => {
+      if (!blob) return;
+      const nombre = `el-retiro-resumen-${mesActivo}.png`;
+      try {
+        const file = new File([blob], nombre, { type: "image/png" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: `Resumen ${mesLabel(mesActivo)}` });
+          return;
+        }
+      } catch {}
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = nombre;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    }, "image/png");
+  }
+
+  async function pdfResumen() {
+    if (!mesActivo) return;
+    await esperarFuentes();
+    const cv = dibujarResumen(mesActivo);
+    if (!cv) return;
+    const data = cv.toDataURL("image/png");
+    const w = window.open("", "_blank");
+    if (!w) {
+      const a = document.createElement("a"); a.href = data; a.download = `el-retiro-resumen-${mesActivo}.png`;
+      document.body.appendChild(a); a.click(); a.remove();
+      return;
+    }
+    w.document.write(`<html><head><title>Resumen ${mesLabel(mesActivo)}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>@page{margin:12mm;}body{margin:0;text-align:center;}img{width:100%;max-width:760px;}</style></head><body><img src="${data}" onload="setTimeout(function(){window.print();},250)"/></body></html>`);
+    w.document.close();
+  }
+
   function exportar() {
     try {
       const data = { app: "El Retiro", version: 1, fecha: new Date().toISOString(), cfg, registros, clientes, programadas };
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `el-retiro-respaldo-${todayISO()}.json`;
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
+      descargar(`el-retiro-respaldo-${todayISO()}.json`, JSON.stringify(data, null, 2), "application/json");
       setImportErr("");
     } catch { setImportErr("No se pudo exportar en este navegador."); }
   }
@@ -572,6 +683,36 @@ export default function App() {
             <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
           </div>
         </header>
+
+        {/* CONFIGURACIÓN (se abre debajo del botón Editar supuestos) */}
+        {showCfg && (
+          <Section tag="Parámetros" title="Supuestos editables"
+            right={<button className="tog" onClick={() => setCfgDraft({ ...DEFAULTS })}>Restablecer</button>}>
+            <div className="grid-3" style={{ rowGap: 16 }}>
+              <Field label="Precio bruta" value={cfgDraft.precioBruta} onChange={setD("precioBruta")} suffix="$/tn" />
+              <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" />
+              <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
+              <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
+              <Field label="Objetivo semanal" value={cfgDraft.objetivoSemana} onChange={setD("objetivoSemana")} suffix="bateas" />
+              <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
+              <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" />
+              <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" />
+              <Field label="Reserva pala" value={cfgDraft.palaReserva} onChange={setD("palaReserva")} suffix="$/h" />
+              <Field label="Jornal" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" />
+              <Field label="Horas pala (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" />
+              <Field label="Horas pala (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" />
+              <Field label="Jornales (bruta)" value={cfgDraft.jornalesBruta} onChange={setD("jornalesBruta")} />
+              <Field label="Jornales (grillada)" value={cfgDraft.jornalesGrillada} onChange={setD("jornalesGrillada")} />
+              <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" />
+            </div>
+            <div className="row" style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.line}`, alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <button className="btn" style={{ background: cfgDirty ? C.accent : C.ink2, cursor: cfgDirty ? "pointer" : "default" }} disabled={!cfgDirty} onClick={guardarCfg}>Guardar supuestos</button>
+              {cfgSaved && <span className="num" style={{ fontSize: 13, color: C.verde }}>✓ Guardado</span>}
+              {!cfgSaved && cfgDirty && <span className="num" style={{ fontSize: 13, color: C.amarillo }}>Cambios sin guardar</span>}
+              {!cfgSaved && !cfgDirty && <span style={{ fontSize: 13, color: C.ink2 }}>Los números de toda la app usan estos valores guardados.</span>}
+            </div>
+          </Section>
+        )}
 
         {/* ALERTAS */}
         {alertas.length > 0 && (
@@ -857,9 +998,23 @@ export default function App() {
           {resumenMeses.length === 0 ? (
             <div style={{ color: C.ink2, fontSize: 14, padding: "8px 0" }}>El resumen se arma solo a medida que registrás cargas.</div>
           ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table className="reg">
-                <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Bateas</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Ingreso</th><th style={{ textAlign: "right" }}>Socios</th><th style={{ textAlign: "right" }}>Margen</th></tr></thead>
+            <>
+              <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14, marginBottom: 18 }}>
+                <div className="label" style={{ marginBottom: 10 }}>Compartir resumen de un mes</div>
+                <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <div className="inputWrap selectWrap" style={{ flex: "1 1 160px" }}>
+                    <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={mesActivo} onChange={(e) => setMesSel(e.target.value)}>
+                      {resumenMeses.map((m) => <option key={m.key} value={m.key}>{mesLabel(m.key)}</option>)}
+                    </select>
+                  </div>
+                  <button className="tog" onClick={compartirImagen}>Compartir imagen</button>
+                  <button className="tog" onClick={pdfResumen}>PDF</button>
+                  <button className="tog" onClick={exportarResumenCSV}>CSV (todos)</button>
+                </div>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table className="reg">
+                  <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Bateas</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Ingreso</th><th style={{ textAlign: "right" }}>Socios</th><th style={{ textAlign: "right" }}>Margen</th></tr></thead>
                 <tbody>
                   {resumenMeses.map((m) => (
                     <tr key={m.key}>
@@ -874,6 +1029,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </Section>
 
@@ -942,66 +1098,8 @@ export default function App() {
           </div>
         </Section>
 
-        {/* CONFIGURACIÓN */}
-        {showCfg && (
-          <Section tag="Parámetros" title="Supuestos editables"
-            right={<button className="tog" onClick={() => setCfgDraft({ ...DEFAULTS })}>Restablecer</button>}>
-            <div className="grid-3" style={{ rowGap: 16 }}>
-              <Field label="Precio bruta" value={cfgDraft.precioBruta} onChange={setD("precioBruta")} suffix="$/tn" step={100} />
-              <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" step={100} />
-              <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
-              <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
-              <Field label="Objetivo semanal" value={cfgDraft.objetivoSemana} onChange={setD("objetivoSemana")} suffix="bateas" />
-              <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
-              <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
-              <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" step={0.5} />
-              <Field label="Reserva pala" value={cfgDraft.palaReserva} onChange={setD("palaReserva")} suffix="$/h" step={500} />
-              <Field label="Jornal" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" step={1000} />
-              <Field label="Horas pala (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" step={0.5} />
-              <Field label="Horas pala (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
-              <Field label="Jornales (bruta)" value={cfgDraft.jornalesBruta} onChange={setD("jornalesBruta")} />
-              <Field label="Jornales (grillada)" value={cfgDraft.jornalesGrillada} onChange={setD("jornalesGrillada")} />
-              <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" step={50000} />
-            </div>
-            <div className="row" style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.line}`, alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-              <button className="btn" style={{ background: cfgDirty ? C.accent : C.ink2, cursor: cfgDirty ? "pointer" : "default" }} disabled={!cfgDirty} onClick={guardarCfg}>Guardar supuestos</button>
-              {cfgSaved && <span className="num" style={{ fontSize: 13, color: C.verde }}>✓ Guardado</span>}
-              {!cfgSaved && cfgDirty && <span className="num" style={{ fontSize: 13, color: C.amarillo }}>Cambios sin guardar</span>}
-              {!cfgSaved && !cfgDirty && <span style={{ fontSize: 13, color: C.ink2 }}>Los números de toda la app usan estos valores guardados.</span>}
-            </div>
-          </Section>
-        )}
-
-        {/* RESPALDO */}
-        <Section tag="Datos" title="Respaldo"
-          right={<span className="label">{registros.length} cargas · {clientes.length} clientes</span>}>
-          <div style={{ color: C.ink2, fontSize: 13.5, marginBottom: 16, lineHeight: 1.5 }}>
-            Exportá un archivo con todas tus cargas y clientes para tenerlo a salvo (guardalo en el teléfono o mandátelo por WhatsApp). Si cambiás de celular o se borran los datos, lo importás y recuperás todo.
-          </div>
-          <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
-            <button className="btn" onClick={exportar}>↓ Exportar respaldo</button>
-            <button className="btn" style={{ background: C.bg, color: C.ink, border: `1px solid ${C.line}` }} onClick={() => document.getElementById("importFile").click()}>↑ Importar respaldo</button>
-            <input id="importFile" type="file" accept="application/json,.json" style={{ display: "none" }} onChange={archivoElegido} />
-          </div>
-
-          {importErr && <div style={{ marginTop: 14, color: C.rojo, fontSize: 13, fontWeight: 600 }}>{importErr}</div>}
-
-          {pendingImport && (
-            <div style={{ marginTop: 14, background: `${C.amarillo}12`, borderLeft: `4px solid ${C.amarillo}`, borderRadius: 10, padding: "14px 16px" }}>
-              <div style={{ fontWeight: 700, fontSize: 14.5 }}>¿Reemplazar los datos actuales?</div>
-              <div style={{ fontSize: 13, color: C.ink2, margin: "4px 0 12px" }}>
-                El respaldo trae {pendingImport.registros.length} cargas y {(pendingImport.clientes || []).length} clientes. Esto reemplaza lo que tenés ahora en este dispositivo.
-              </div>
-              <div className="row" style={{ gap: 10 }}>
-                <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={confirmarImport}>Confirmar</button>
-                <button className="tog" onClick={() => setPendingImport(null)}>Cancelar</button>
-              </div>
-            </div>
-          )}
-        </Section>
-
         <footer style={{ marginTop: 28, color: C.ink2, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.04em" }}>
-          Los supuestos se aplican al apretar Guardar. Datos guardados en este dispositivo — exportá un respaldo cada tanto.
+          Los resúmenes se guardan solos mes a mes. Compartí el del mes como imagen o PDF cuando quieras.
         </footer>
       </div>
     </div>
