@@ -112,7 +112,7 @@ function startOfWeek(d = new Date()) {
 
 const C = {
   bg: "#ffffff", panel: "#faf8f4", line: "#e6e2da", ink: "#1a1714",
-  ink2: "#7a736b", accent: "#b45309",
+  ink2: "#7a736b", accent: "#540c18",
   verde: "#15803d", amarillo: "#ca8a04", rojo: "#dc2626",
 };
 
@@ -186,6 +186,7 @@ export default function App() {
   const [modo, setModo] = useState("bruta");
   const [bateas, setBateas] = useState(DEFAULTS.objetivoSemana);
   const [showCfg, setShowCfg] = useState(false);
+  const [logoOk, setLogoOk] = useState(true);
 
   // form de carga
   const [fFecha, setFFecha] = useState(todayISO());
@@ -364,9 +365,16 @@ export default function App() {
       <div className="app">
         {/* HEADER */}
         <header style={{ marginBottom: 24, paddingBottom: 20, borderBottom: `2px solid ${C.ink}` }}>
-          <div className="label" style={{ color: C.accent, marginBottom: 6 }}>ARENERA · SOL DE JULIO · STGO. DEL ESTERO</div>
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 10 }}>
-            <h1 style={{ margin: 0, fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 38, letterSpacing: "-0.03em" }}>Panel de control</h1>
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
+            <div>
+              {logoOk ? (
+                <img src="/logo.png" alt="El Retiro" onError={() => setLogoOk(false)}
+                  style={{ width: "min(230px, 62vw)", height: "auto", display: "block" }} />
+              ) : (
+                <h1 style={{ margin: 0, fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 38, letterSpacing: "-0.03em", color: C.accent }}>EL RETIRO</h1>
+              )}
+              <div className="label" style={{ color: C.accent, marginTop: 10 }}>Panel de control · Arenera · Sol de Julio</div>
+            </div>
             <button className="tog" onClick={() => setShowCfg((s) => !s)}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
           </div>
         </header>
