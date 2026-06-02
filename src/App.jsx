@@ -2,7 +2,35 @@
 // Deploy: proyecto Vite React -> reemplazá src/App.jsx por este archivo -> push a GitHub -> import en Vercel.
 // Persistencia: localStorage (funciona en Vercel; en la vista previa del chat puede no guardar entre recargas).
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { initializeApp } from "firebase/app";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
+import { getFirestore, doc, onSnapshot, setDoc } from "firebase/firestore";
+
+// ⚙️ PEGÁ ACÁ LA CONFIG DE TU PROYECTO (Firebase → Configuración del proyecto → Tus apps → SDK)
+const firebaseConfig = {
+  apiKey: "TU_API_KEY",
+  authDomain: "TU_PROYECTO.firebaseapp.com",
+  projectId: "TU_PROYECTO",
+  storageBucket: "TU_PROYECTO.firebasestorage.app",
+  messagingSenderId: "TU_SENDER_ID",
+  appId: "TU_APP_ID",
+};
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp);
+const db = getFirestore(fbApp);
+
+const msgAuth = (code) => ({
+  "auth/invalid-email": "El email no es válido.",
+  "auth/missing-password": "Falta la contraseña.",
+  "auth/weak-password": "La contraseña debe tener al menos 6 caracteres.",
+  "auth/email-already-in-use": "Ese email ya tiene una cuenta. Iniciá sesión.",
+  "auth/invalid-credential": "Email o contraseña incorrectos.",
+  "auth/user-not-found": "No existe una cuenta con ese email.",
+  "auth/wrong-password": "Contraseña incorrecta.",
+  "auth/too-many-requests": "Demasiados intentos. Esperá un momento.",
+  "auth/network-request-failed": "Sin conexión. Revisá internet.",
+}[code] || "No se pudo entrar. Revisá los datos e intentá de nuevo.");
 
 /* ────────────────────────────────────────────────────────────
    SUPUESTOS POR DEFECTO (editables desde la app)
@@ -201,6 +229,17 @@ export default function App() {
   const [cfgSaved, setCfgSaved] = useState(false);
   const [mesSel, setMesSel] = useState("");
 
+  // sesión
+  const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPass, setAuthPass] = useState("");
+  const [authMode, setAuthMode] = useState("signin");
+  const [authErr, setAuthErr] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const hydrated = useRef(false);
+  const remoteApplying = useRef(false);
+
   // form de carga
   const [fFecha, setFFecha] = useState(todayISO());
   const [fModo, setFModo] = useState("bruta");
@@ -229,6 +268,52 @@ export default function App() {
   useEffect(() => save("arenera_cfg_v1", cfg), [cfg]);
   useEffect(() => save("arenera_reg_v1", registros), [registros]);
   useEffect(() => save("arenera_cli_v1", clientes), [clientes]);
+
+  // ── SESIÓN Y NUBE (Firebase) ──────────────────────────────
+  useEffect(() => onAuthStateChanged(auth, (u) => { setUser(u); setAuthReady(true); }), []);
+
+  // cargar y escuchar en vivo los datos del usuario
+  useEffect(() => {
+    if (!user) { hydrated.current = false; return; }
+    hydrated.current = false;
+    const ref = doc(db, "areneras", user.uid);
+    const unsub = onSnapshot(ref, (snap) => {
+      if (snap.exists()) {
+        const d = snap.data();
+        remoteApplying.current = true;
+        setCfg({ ...DEFAULTS, ...(d.cfg || {}) });
+        setRegistros(Array.isArray(d.registros) ? d.registros : []);
+        setClientes(Array.isArray(d.clientes) ? d.clientes : []);
+        setProgramadas(Array.isArray(d.programadas) ? d.programadas : []);
+        hydrated.current = true;
+        setTimeout(() => { remoteApplying.current = false; }, 0);
+      } else {
+        setDoc(ref, { cfg, registros, clientes, programadas, updated: Date.now() }).catch(() => {});
+        hydrated.current = true;
+      }
+    }, () => {});
+    return () => unsub();
+  }, [user]);
+
+  // guardar cambios en la nube (con un respiro para no escribir en cada tecla)
+  useEffect(() => {
+    if (!user || !hydrated.current || remoteApplying.current) return;
+    const ref = doc(db, "areneras", user.uid);
+    const t = setTimeout(() => {
+      setDoc(ref, { cfg, registros, clientes, programadas, updated: Date.now() }, { merge: true }).catch(() => {});
+    }, 700);
+    return () => clearTimeout(t);
+  }, [cfg, registros, clientes, programadas, user]);
+
+  async function entrar() {
+    setAuthErr(""); setAuthBusy(true);
+    try {
+      if (authMode === "signup") await createUserWithEmailAndPassword(auth, authEmail.trim(), authPass);
+      else await signInWithEmailAndPassword(auth, authEmail.trim(), authPass);
+      setAuthPass("");
+    } catch (e) { setAuthErr(msgAuth(e && e.code)); }
+    setAuthBusy(false);
+  }
 
   const setD = (k) => (v) => { setCfgDraft((d) => ({ ...d, [k]: v })); setCfgSaved(false); };
   const normCfg = (obj) => { const o = {}; for (const k in obj) { const v = obj[k]; o[k] = typeof v === "number" ? v : (parseFloat(v) || 0); } return o; };
@@ -667,6 +752,33 @@ export default function App() {
         }
       `}</style>
 
+      {!authReady ? (
+        <div className="app" style={{ paddingTop: 90, textAlign: "center", color: C.ink2, fontFamily: "'IBM Plex Mono',monospace" }}>Cargando…</div>
+      ) : !user ? (
+        <div className="app" style={{ maxWidth: 430 }}>
+          <div style={{ marginTop: 36, marginBottom: 22, textAlign: "center" }}>
+            <h1 style={{ margin: 0, fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 34, letterSpacing: "-0.02em", color: C.accent }}>EL RETIRO</h1>
+            <div className="label" style={{ marginTop: 8 }}>Panel de control · Arenera · Sol de Julio</div>
+          </div>
+          <div className="card">
+            <div style={{ fontWeight: 700, fontSize: 19, marginBottom: 18, fontFamily: "Archivo, sans-serif" }}>{authMode === "signup" ? "Crear cuenta" : "Iniciar sesión"}</div>
+            <label style={{ display: "block", marginBottom: 12 }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Email</span>
+              <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} type="email" inputMode="email" autoCapitalize="none" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} /></div>
+            </label>
+            <label style={{ display: "block", marginBottom: 16 }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Contraseña</span>
+              <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} type="password" value={authPass} onChange={(e) => setAuthPass(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") entrar(); }} /></div>
+            </label>
+            {authErr && <div style={{ color: C.rojo, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{authErr}</div>}
+            <button className="btn" style={{ width: "100%" }} disabled={authBusy} onClick={entrar}>{authBusy ? "Entrando…" : (authMode === "signup" ? "Crear cuenta" : "Entrar")}</button>
+            <div style={{ textAlign: "center", marginTop: 14, fontSize: 13, color: C.ink2 }}>
+              {authMode === "signup" ? "¿Ya tenés cuenta? " : "¿Primera vez? "}
+              <button onClick={() => { setAuthMode(authMode === "signup" ? "signin" : "signup"); setAuthErr(""); }} style={{ border: 0, background: "transparent", color: C.accent, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>{authMode === "signup" ? "Iniciar sesión" : "Crear cuenta"}</button>
+            </div>
+          </div>
+        </div>
+      ) : (
       <div className="app">
         {/* HEADER */}
         <header style={{ marginBottom: 24, paddingBottom: 20, borderBottom: `2px solid ${C.ink}` }}>
@@ -680,7 +792,10 @@ export default function App() {
               )}
               <div className="label" style={{ color: C.accent, marginTop: 10 }}>Panel de control · Arenera · Sol de Julio</div>
             </div>
-            <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
+            <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
+              <button className="tog" onClick={() => signOut(auth)}>Salir</button>
+            </div>
           </div>
         </header>
 
@@ -1102,6 +1217,7 @@ export default function App() {
           Los resúmenes se guardan solos mes a mes. Compartí el del mes como imagen o PDF cuando quieras.
         </footer>
       </div>
+      )}
     </div>
   );
 }
