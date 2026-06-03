@@ -815,6 +815,21 @@ export default function App() {
     descargarCanvas(cv, `liquidacion-${cl.nombre.replace(/\s+/g, "-")}-${mesActivo}.png`);
   }
 
+  function exportarClienteCSV() {
+    const cl = resumenPorCliente.find((c) => (c.clienteId || c.nombre) === clienteSel);
+    if (!cl || !mesActivo) return;
+    const sep = ";";
+    const head = ["Fecha", "Modo", "Bateas", "Toneladas", "Precio/tn", "Subtotal"];
+    const filas = cl.cargas.map((c) => [
+      fechaCorta(c.fecha), c.modo, c.bateas, Math.round(c.tn),
+      c.precioTn != null ? c.precioTn : "A definir",
+      c.ingreso != null ? Math.round(c.ingreso) : "",
+    ]);
+    const total = ["TOTAL", "", cl.cargas.length + " cargas", Math.round(cl.tn), "", Math.round(cl.ingreso)];
+    const csv = "\uFEFF" + [head, ...filas, total].map((r) => r.join(sep)).join("\n");
+    descargar(`liquidacion-${cl.nombre.replace(/\s+/g, "-")}-${mesActivo}.csv`, csv, "text/csv;charset=utf-8;");
+  }
+
   async function pdfResumen() {
     if (!mesActivo) return;
     await esperarFuentes();
