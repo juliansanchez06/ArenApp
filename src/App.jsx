@@ -219,6 +219,7 @@ export default function App() {
   const [registros, setRegistros] = useState(() => load("arenera_reg_v1", []));
   const [clientes, setClientes] = useState(() => load("arenera_cli_v1", []));
   const [programadas, setProgramadas] = useState(() => load("arenera_prog_v1", []));
+  const [gastosFijos, setGastosFijos] = useState(() => load("arenera_gastos_v1", []));
   const [modo, setModo] = useState("bruta");
   const [bateas, setBateas] = useState(DEFAULTS.objetivoMes);
   const [showCfg, setShowCfg] = useState(false);
@@ -285,6 +286,7 @@ export default function App() {
   const [cTraenEquipo, setCTraenEquipo] = useState(false);
 
   useEffect(() => save("arenera_prog_v1", programadas), [programadas]);
+  useEffect(() => save("arenera_gastos_v1", gastosFijos), [gastosFijos]);
 
   useEffect(() => save("arenera_cfg_v1", cfg), [cfg]);
   useEffect(() => save("arenera_reg_v1", registros), [registros]);
@@ -306,10 +308,11 @@ export default function App() {
         setRegistros(Array.isArray(d.registros) ? d.registros : []);
         setClientes(Array.isArray(d.clientes) ? d.clientes : []);
         setProgramadas(Array.isArray(d.programadas) ? d.programadas : []);
+        setGastosFijos(Array.isArray(d.gastosFijos) ? d.gastosFijos : []);
         hydrated.current = true;
         setTimeout(() => { remoteApplying.current = false; }, 0);
       } else {
-        setDoc(ref, { cfg, registros, clientes, programadas, updated: Date.now() }).catch(() => {});
+        setDoc(ref, { cfg, registros, clientes, programadas, gastosFijos, updated: Date.now() }).catch(() => {});
         hydrated.current = true;
       }
     }, () => {});
@@ -321,10 +324,10 @@ export default function App() {
     if (!user || !hydrated.current || remoteApplying.current) return;
     const ref = doc(db, "areneras", user.uid);
     const t = setTimeout(() => {
-      setDoc(ref, { cfg, registros, clientes, programadas, updated: Date.now() }, { merge: true }).catch(() => {});
+      setDoc(ref, { cfg, registros, clientes, programadas, gastosFijos, updated: Date.now() }, { merge: true }).catch(() => {});
     }, 700);
     return () => clearTimeout(t);
-  }, [cfg, registros, clientes, programadas, user]);
+  }, [cfg, registros, clientes, programadas, gastosFijos, user]);
 
   async function entrar() {
     setAuthErr(""); setAuthBusy(true);
@@ -428,13 +431,16 @@ export default function App() {
     for (const r of registros) {
       const key = r.fecha.slice(0, 7);
       const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
-      if (!map[key]) map[key] = { key, tn: 0, bruto: 0, comision: 0, costo: 0, margen: 0, bateas: 0, cargas: 0 };
+      if (!map[key]) map[key] = { key, tn: 0, bruto: 0, comision: 0, regalia: 0, operacion: 0, costo: 0, margen: 0, bateas: 0, cargas: 0 };
       const o = map[key];
       o.tn += c.tn; o.bruto += c.ingresoBruto; o.comision += c.comision;
+      o.regalia += c.regaliaMonto; o.operacion += (c.costoTotal - c.regaliaMonto);
       o.costo += c.costoTotal; o.margen += c.margen; o.bateas += r.bateas; o.cargas += 1;
     }
     return Object.values(map).sort((a, b) => (a.key < b.key ? 1 : -1));
   }, [registros, cfg]);
+
+  const totalFijos = useMemo(() => gastosFijos.reduce((s, g) => s + (parseFloat(g.monto) || 0), 0), [gastosFijos]);
 
   const mesActivo = mesSel || (resumenMeses[0] ? resumenMeses[0].key : "");
 
@@ -587,6 +593,26 @@ export default function App() {
     setEditingCliId(null);
   }
 
+  // ── GASTOS FIJOS ─────────────────────────────────────────
+  const [gNombre, setGNombre] = useState("");
+  const [gMonto, setGMonto] = useState("");
+  const [editingGastoId, setEditingGastoId] = useState(null);
+  const [editGNombre, setEditGNombre] = useState("");
+  const [editGMonto, setEditGMonto] = useState("");
+
+  function agregarGasto() {
+    if (!gNombre.trim() || !(parseFloat(gMonto) > 0)) return;
+    setGastosFijos((gs) => [...gs, { id: Date.now(), nombre: gNombre.trim(), monto: parseFloat(gMonto) }]);
+    setGNombre(""); setGMonto("");
+  }
+  function borrarGasto(id) { setGastosFijos((gs) => gs.filter((g) => g.id !== id)); }
+  function abrirEditGasto(g) { setEditingGastoId(g.id); setEditGNombre(g.nombre); setEditGMonto(String(g.monto)); }
+  function guardarEditGasto() {
+    if (!editGNombre.trim() || !(parseFloat(editGMonto) > 0)) return;
+    setGastosFijos((gs) => gs.map((g) => g.id === editingGastoId ? { ...g, nombre: editGNombre.trim(), monto: parseFloat(editGMonto) } : g));
+    setEditingGastoId(null);
+  }
+
   function fijarObjetivo() {
     const val = parseFloat(bateas) || 1;
     setCfg((c) => ({ ...c, objetivoMes: val }));
@@ -623,7 +649,7 @@ export default function App() {
   async function dibujarResumen(key) {
     const m = resumenMeses.find((x) => x.key === key);
     if (!m) return null;
-    const W = 900, H = 700, s = 2;
+    const W = 900, H = 760, s = 2;
     const cv = document.createElement("canvas");
     cv.width = W * s; cv.height = H * s;
     const ctx = cv.getContext("2d");
@@ -686,8 +712,11 @@ export default function App() {
     ctx.fillStyle = "#ca8a0418"; ctx.fillRect(40, y - 30, W - 80, 40);
     rowOut(y, `▸ Para socios (${cfg.comisionSocios}%)`, `$${N(m.comision)}`, { valColor: "#ca8a04" }); y += 46;
 
-    // Costos propios
-    rowOut(y, `▸ Costos propios (pala, gente, regalía)`, `$${N(m.costo)}`, { valColor: "#dc2626" }); y += 64;
+    // Costos separados
+    rowOut(y, `▸ Regalía provincial (${cfg.regalia}%)`, `$${N(m.regalia)}`, { valColor: "#dc2626" }); y += 42;
+    rowOut(y, `▸ Operación (pala, gente, varios)`, m.operacion > 0 ? `$${N(m.operacion)}` : "$0", { valColor: m.operacion > 0 ? "#dc2626" : "#15803d" }); y += 58;
+
+    ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, y - 26); ctx.lineTo(W - 48, y - 26); ctx.stroke();
 
     ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, y - 26); ctx.lineTo(W - 48, y - 26); ctx.stroke();
 
@@ -1400,6 +1429,86 @@ export default function App() {
             </div>
           )}
         </Section>
+
+        {/* GASTOS FIJOS */}
+        <Section tag="Estructura" title="Gastos fijos mensuales">
+          <div style={{ fontSize: 13, color: C.ink2, marginBottom: 14 }}>Costos que pagás todos los meses sin importar cuánto vendas: cuota de la pala, seguro, salarios fijos, etc. La app los descuenta del margen para mostrarte el resultado real.</div>
+          {editingGastoId && (() => {
+            const g = gastosFijos.find((x) => x.id === editingGastoId);
+            return g ? (
+              <div style={{ background: `${C.accent}0c`, border: `1px solid ${C.accent}44`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                <div className="label" style={{ marginBottom: 8 }}>Editando: {g.nombre}</div>
+                <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <label style={{ flex: "1 1 200px", display: "block" }}>
+                    <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Concepto</span>
+                    <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={editGNombre} onChange={(e) => setEditGNombre(e.target.value)} /></div>
+                  </label>
+                  <Field label="Monto mensual" value={editGMonto} onChange={setEditGMonto} suffix="$" />
+                  <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={guardarEditGasto}>Guardar</button>
+                  <button className="tog" onClick={() => setEditingGastoId(null)}>Cancelar</button>
+                </div>
+              </div>
+            ) : null;
+          })()}
+          <div className="grid-form" style={{ marginBottom: 12 }}>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Concepto</span>
+              <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={gNombre} placeholder="Ej: Cuota pala, Seguro…" onChange={(e) => setGNombre(e.target.value)} /></div>
+            </label>
+            <Field label="Monto mensual" value={gMonto} onChange={setGMonto} suffix="$" />
+            <button className="btn" onClick={agregarGasto} style={{ alignSelf: "flex-end" }}>+ Agregar</button>
+          </div>
+          {gastosFijos.length > 0 && (
+            <div style={{ overflowX: "auto", marginBottom: 8 }}>
+              <table className="reg">
+                <thead><tr><th>Concepto</th><th style={{ textAlign: "right" }}>Por mes</th><th></th></tr></thead>
+                <tbody>
+                  {gastosFijos.map((g) => (
+                    <tr key={g.id}>
+                      <td data-label="Concepto" style={{ fontWeight: 500 }}>{g.nombre}</td>
+                      <td data-label="Por mes" className="num" style={{ textAlign: "right", color: C.rojo }}>{$(g.monto)}</td>
+                      <td style={{ textAlign: "right" }}>
+                        <button className="del" style={{ marginRight: 6, color: C.accent }} onClick={() => abrirEditGasto(g)}>✎</button>
+                        <button className="del" onClick={() => borrarGasto(g.id)}>×</button>
+                      </td>
+                    </tr>
+                  ))}
+                  <tr style={{ borderTop: `2px solid ${C.line}` }}>
+                    <td style={{ fontWeight: 700 }}>Total fijos</td>
+                    <td className="num" style={{ textAlign: "right", color: C.rojo, fontWeight: 700 }}>{$(totalFijos)}</td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
+
+        {/* RESULTADO NETO DEL MES */}
+        {mesActivo && (() => {
+          const m = resumenMeses.find((x) => x.key === mesActivo);
+          if (!m) return null;
+          const neto = m.margen - totalFijos;
+          const cubierto = m.margen >= totalFijos;
+          const tnFaltantes = totalFijos > 0 && !cubierto && m.tn > 0 ? ((totalFijos - m.margen) / (m.margen / m.tn)) : 0;
+          return (
+            <Section tag="Resultado" title={`Cierre real — ${mesLabel(mesActivo)}`}>
+              <div className="grid-3" style={{ marginBottom: 16 }}>
+                <Kpi label="Margen operativo" value={$(m.margen)} sub="ventas − socios − op." color={C.accent} />
+                {totalFijos > 0 && <Kpi label="Gastos fijos" value={$(totalFijos)} sub="por mes" color={C.rojo} />}
+                <Kpi label="Resultado neto real" value={$(neto)} sub={cubierto ? "✓ cubriste los fijos" : "sin cubrir fijos aún"} color={neto >= 0 ? C.verde : C.rojo} />
+              </div>
+              {totalFijos > 0 && (
+                <div style={{ background: cubierto ? `${C.verde}0f` : `${C.rojo}0f`, border: `1px solid ${cubierto ? C.verde : C.rojo}33`, borderRadius: 12, padding: "12px 16px", fontSize: 13 }}>
+                  {cubierto
+                    ? <><span style={{ color: C.verde, fontWeight: 700 }}>✓ Fijos cubiertos.</span> Te sobran <b>{$(neto)}</b> después de gastos fijos este mes.</>
+                    : <><span style={{ color: C.rojo, fontWeight: 700 }}>⚠ Faltan {$(totalFijos - m.margen)} para cubrir los fijos.</span> Necesitás vender aprox. <b>{N(tnFaltantes)} tn más</b> este mes.</>
+                  }
+                </div>
+              )}
+            </Section>
+          );
+        })()}
 
         {/* RESUMEN POR MES */}
         <Section tag="Resumen" title="Mes por mes">
