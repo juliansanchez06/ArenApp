@@ -59,10 +59,10 @@ const DEFAULTS = {
 /* ────────────────────────────────────────────────────────────
    MOTOR DE CÁLCULO
    ──────────────────────────────────────────────────────────── */
-function calcDia(cfg, modo, tn, precioTn = null) {
+function calcDia(cfg, modo, tn, precioTn = null, comisionPct = null) {
   const precio = precioTn != null ? precioTn : (modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
   const ingresoBruto = tn * precio;
-  const comision = ingresoBruto * (cfg.comisionSocios / 100);
+  const comision = ingresoBruto * ((comisionPct != null ? comisionPct : cfg.comisionSocios) / 100);
   const regaliaMonto = ingresoBruto * (cfg.regalia / 100);
   const ingresoNeto = ingresoBruto - comision;
 
@@ -264,6 +264,12 @@ export default function App() {
   // edición inline de precio
   const [editingRegId, setEditingRegId] = useState(null);
   const [editPrecio, setEditPrecio] = useState("");
+  // edición de clientes
+  const [editingCliId, setEditingCliId] = useState(null);
+  const [editCliNombre, setEditCliNombre] = useState("");
+  const [editCliLocalidad, setEditCliLocalidad] = useState("");
+  const [editCliTel, setEditCliTel] = useState("");
+  const [editCliCanal, setEditCliCanal] = useState("Socios");
   // cliente seleccionado para exportar
   const [clienteSel, setClienteSel] = useState("");
 
@@ -360,7 +366,7 @@ export default function App() {
     let tnMes = 0, ingMes = 0, comMes = 0, costoMes = 0, margenMes = 0, tnDir = 0, batMes = 0;
     for (const r of registros) {
       const d = new Date(r.fecha + "T00:00:00");
-      const calc = calcDia(cfg, r.modo, regTn(r), regPrecio(r));
+      const calc = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios);
       if (d.getMonth() === m && d.getFullYear() === y) {
         tnMes += calc.tn; ingMes += calc.ingresoBruto; comMes += calc.comision;
         costoMes += calc.costoTotal; margenMes += calc.margen; batMes += r.bateas;
@@ -403,7 +409,7 @@ export default function App() {
       let tn = 0, margen = 0, cargas = 0, ultima = null;
       for (const r of registros) {
         if (r.clienteId !== cl.id) continue;
-        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r));
+        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios);
         tn += c.tn; margen += c.margen; cargas += 1;
         if (!ultima || r.fecha > ultima) ultima = r.fecha;
       }
@@ -416,7 +422,7 @@ export default function App() {
     const map = {};
     for (const r of registros) {
       const key = r.fecha.slice(0, 7);
-      const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r));
+      const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios);
       if (!map[key]) map[key] = { key, tn: 0, bruto: 0, comision: 0, costo: 0, margen: 0, bateas: 0, cargas: 0 };
       const o = map[key];
       o.tn += c.tn; o.bruto += c.ingresoBruto; o.comision += c.comision;
@@ -451,7 +457,7 @@ export default function App() {
       const d = new Date(r.fecha + "T00:00:00");
       if (d.getFullYear() === cal.y && d.getMonth() === cal.m) {
         const day = d.getDate();
-        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r));
+        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios);
         if (!days[day]) days[day] = { tn: 0, bateas: 0, cargas: 0 };
         days[day].tn += c.tn; days[day].bateas += r.bateas; days[day].cargas += 1;
       }
@@ -563,6 +569,23 @@ export default function App() {
     setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios");
   }
   function borrarCliente(id) { setClientes((cs) => cs.filter((c) => c.id !== id)); }
+  function abrirEditCliente(cl) {
+    setEditingCliId(cl.id); setEditCliNombre(cl.nombre); setEditCliLocalidad(cl.localidad || "");
+    setEditCliTel(cl.tel || ""); setEditCliCanal(cl.canal || "Socios");
+  }
+  function guardarEditCliente() {
+    if (!editCliNombre.trim()) return;
+    setClientes((cs) => cs.map((c) => c.id === editingCliId
+      ? { ...c, nombre: editCliNombre.trim(), localidad: editCliLocalidad.trim(), tel: editCliTel.trim(), canal: editCliCanal }
+      : c));
+    setEditingCliId(null);
+  }
+
+  function fijarObjetivo() {
+    const val = parseFloat(bateas) || 1;
+    setCfg((c) => ({ ...c, objetivoMes: val }));
+    setCfgDraft((d) => ({ ...d, objetivoMes: val }));
+  }
 
   function elegirCliente(id) {
     setFClienteId(id);
@@ -1032,10 +1055,14 @@ export default function App() {
             <div style={{ marginBottom: 16 }}>
               <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
                 <span className="label">Bateas a cargar</span>
-                <span className="num" style={{ fontSize: 18, color: C.accent }}>{bateas} · {N(dia.tn)} tn</span>
+                <div className="row" style={{ gap: 10, alignItems: "center" }}>
+                  <span className="num" style={{ fontSize: 18, color: C.accent }}>{bateas} · {N(dia.tn)} tn</span>
+                  <button className="tog" style={{ fontSize: 11, padding: "5px 10px" }} title={`Fijar ${bateas} como objetivo mensual`} onClick={fijarObjetivo}>{bateas === cfg.objetivoMes ? "✓ objetivo" : "Fijar objetivo"}</button>
+                </div>
               </div>
               <input type="range" min={1} max={30} value={bateas} onChange={(e) => setBateas(parseInt(e.target.value))}
                 style={{ width: "100%", accentColor: C.accent }} />
+              <div style={{ fontSize: 12, color: C.ink2, marginTop: 6, fontFamily: "'IBM Plex Mono',monospace" }}>Objetivo actual: <b style={{ color: C.ink }}>{cfg.objetivoMes} bateas/mes</b></div>
             </div>
             <table style={{ width: "100%" }} className="brk">
               <tbody>
@@ -1082,12 +1109,45 @@ export default function App() {
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
               <div className="inputWrap selectWrap">
                 <select className="input" value={cCanal} onChange={(e) => setCCanal(e.target.value)}>
-                  <option>Socios</option><option>Directo</option>
+                  <option value="Socios">Socios (descuenta comisión)</option><option value="Directo">Directo (precio entero para mí)</option>
                 </select>
               </div>
             </label>
             <button className="btn" onClick={agregarCliente}>+ Agregar</button>
           </div>
+
+          {editingCliId && (
+            <div style={{ background: `${C.accent}0c`, border: `1px solid ${C.accent}44`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+              <div className="label" style={{ marginBottom: 10 }}>Editando cliente</div>
+              <div className="grid-3" style={{ rowGap: 12, marginBottom: 12 }}>
+                <label style={{ display: "block" }}>
+                  <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Nombre</span>
+                  <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={editCliNombre} onChange={(e) => setEditCliNombre(e.target.value)} /></div>
+                </label>
+                <label style={{ display: "block" }}>
+                  <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Localidad</span>
+                  <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={editCliLocalidad} onChange={(e) => setEditCliLocalidad(e.target.value)} /></div>
+                </label>
+                <label style={{ display: "block" }}>
+                  <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Teléfono</span>
+                  <div className="inputWrap"><input className="input" value={editCliTel} onChange={(e) => setEditCliTel(e.target.value)} /></div>
+                </label>
+                <label style={{ display: "block" }}>
+                  <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
+                  <div className="inputWrap selectWrap">
+                    <select className="input" value={editCliCanal} onChange={(e) => setEditCliCanal(e.target.value)}>
+                      <option value="Socios">Socios (descuenta comisión)</option>
+                      <option value="Directo">Directo (precio entero para mí)</option>
+                    </select>
+                  </div>
+                </label>
+              </div>
+              <div className="row" style={{ gap: 10 }}>
+                <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={guardarEditCliente}>Guardar</button>
+                <button className="tog" onClick={() => setEditingCliId(null)}>Cancelar</button>
+              </div>
+            </div>
+          )}
 
           {clientes.length === 0 ? (
             <div style={{ color: C.ink2, fontSize: 14, padding: "16px 0" }}>Cargá tus corralones y clientes acá. Después los elegís de la lista al registrar cada venta y la app te arma el historial de cada uno.</div>
@@ -1100,13 +1160,16 @@ export default function App() {
                     <tr key={c.id}>
                       <td data-label="Cliente" style={{ fontWeight: 600 }}>{c.nombre}</td>
                       <td data-label="Localidad" style={{ color: C.ink2 }}>{c.localidad || "—"}</td>
-                      <td data-label="Canal"><span className="pill" style={{ background: c.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: c.canal === "Directo" ? C.verde : C.amarillo }}>{c.canal}</span></td>
+                      <td data-label="Canal"><span className="pill" style={{ background: c.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: c.canal === "Directo" ? C.verde : C.amarillo }}>{c.canal === "Directo" ? "Directo" : "Socios"}</span></td>
                       <td data-label="Tel" className="num" style={{ fontSize: 12.5 }}>{c.tel || "—"}</td>
                       <td data-label="Tn total" className="num" style={{ textAlign: "right" }}>{N(c.tn)}</td>
                       <td data-label="Margen" className="num" style={{ textAlign: "right", color: c.margen > 0 ? C.verde : C.ink2 }}>{$(c.margen)}</td>
                       <td data-label="Cargas" className="num" style={{ textAlign: "right" }}>{c.cargas}</td>
                       <td data-label="Última" className="num" style={{ fontSize: 12.5 }}>{c.ultima || "—"}</td>
-                      <td data-label="" style={{ textAlign: "right" }}><button className="del" onClick={() => borrarCliente(c.id)}>×</button></td>
+                      <td data-label="" style={{ textAlign: "right" }}>
+                        <button className="del" style={{ marginRight: 6, color: C.accent }} onClick={() => abrirEditCliente(c)}>✎</button>
+                        <button className="del" onClick={() => borrarCliente(c.id)}>×</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1224,7 +1287,7 @@ export default function App() {
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
               <div className="inputWrap selectWrap">
                 <select className="input" value={fCanal} onChange={(e) => setFCanal(e.target.value)}>
-                  <option>Socios</option><option>Directo</option>
+                  <option value="Socios">Socios (descuenta comisión)</option><option value="Directo">Directo (precio entero para mí)</option>
                 </select>
               </div>
             </label>
@@ -1263,7 +1326,7 @@ export default function App() {
                 <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>$/tn</th><th>Cliente</th><th>Patente</th><th>Canal</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
                 <tbody>
                   {registros.map((r) => {
-                    const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r));
+                    const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios);
                     return (
                       <tr key={r.id}>
                         <td data-label="Fecha" className="num" style={{ fontSize: 12.5 }}>{r.fecha}</td>
