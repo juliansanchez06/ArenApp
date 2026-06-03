@@ -676,20 +676,32 @@ export default function App() {
     };
 
     let y = divY + 52;
-    rowOut(y, "Bateas cargadas", N(m.bateas)); y += 50;
-    rowOut(y, "Toneladas", `${N(m.tn)} tn`); y += 60;
-    ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, y - 24); ctx.lineTo(W - 48, y - 24); ctx.stroke();
-    rowOut(y, "Ingreso bruto", `$${N(m.bruto)}`); y += 50;
-    rowOut(y, "Comisión socios", `− $${N(m.comision)}`, { valColor: "#dc2626" }); y += 50;
-    rowOut(y, "Costo operativo", `− $${N(m.costo)}`, { valColor: "#dc2626" }); y += 70;
+    rowOut(y, "Bateas cargadas", N(m.bateas)); y += 46;
+    rowOut(y, "Toneladas", `${N(m.tn)} tn`); y += 54;
+    ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, y - 22); ctx.lineTo(W - 48, y - 22); ctx.stroke();
 
-    ctx.fillStyle = "#540c1810"; ctx.fillRect(40, y - 44, W - 80, 64);
-    rowOut(y, "Margen del mes", `$${N(m.margen)}`, { big: true, lblColor: "#1a1714", valColor: m.margen >= 0 ? "#15803d" : "#dc2626" });
+    rowOut(y, "Ingreso bruto total", `$${N(m.bruto)}`); y += 46;
 
+    // Para socios
+    ctx.fillStyle = "#ca8a0418"; ctx.fillRect(40, y - 30, W - 80, 40);
+    rowOut(y, `▸ Para socios (${cfg.comisionSocios}%)`, `$${N(m.comision)}`, { valColor: "#ca8a04" }); y += 46;
+
+    // Costos propios
+    rowOut(y, `▸ Costos propios (pala, gente, regalía)`, `$${N(m.costo)}`, { valColor: "#dc2626" }); y += 64;
+
+    ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, y - 26); ctx.lineTo(W - 48, y - 26); ctx.stroke();
+
+    // Para el propietario
+    ctx.fillStyle = "#15803d18"; ctx.fillRect(40, y - 30, W - 80, 72);
+    rowOut(y, "Para el propietario (neto)", `$${N(m.margen)}`, { big: true, lblColor: "#1a1714", valColor: m.margen >= 0 ? "#15803d" : "#dc2626" });
+
+    // resumen en una línea
     ctx.textAlign = "left";
-    ctx.fillStyle = "#7a736b";
-    ctx.font = "500 14px 'IBM Plex Mono', monospace";
-    ctx.fillText(`Generado ${todayISO()} · ${m.cargas} carga(s) en el mes`, 48, H - 36);
+    ctx.fillStyle = "#7a736b"; ctx.font = "500 13px 'IBM Plex Mono', monospace";
+    ctx.fillText(`Socios: $${N(m.comision)}  ·  Propietario: $${N(m.margen)}  ·  ${m.cargas} carga(s)`, 48, y + 34);
+
+    ctx.fillStyle = "#b0a89a"; ctx.font = "500 12px 'IBM Plex Mono', monospace";
+    ctx.fillText(`Generado ${todayISO()} · El Retiro · Sol de Julio`, 48, H - 24);
     return cv;
   }
 
@@ -754,64 +766,62 @@ export default function App() {
     return cv;
   }
 
-  async function compartirImagenCliente() {
-    var cl = resumenPorCliente.find(function(c) { return (c.clienteId || c.nombre) === clienteSel; });
-    if (!cl || !mesActivo) return;
-    await esperarFuentes();
-    var cv = await dibujarResumenCliente(mesActivo, cl);
-    if (!cv) return;
-    var nombre = "liquidacion-" + cl.nombre.replace(/\s+/g, "-") + "-" + mesActivo + ".png";
-    cv.toBlob(async function(blob) {
+  // helper: baja el canvas como PNG directamente
+  function descargarCanvas(cv, nombre) {
+    cv.toBlob((blob) => {
       if (!blob) return;
-      try { var f = new File([blob], nombre, { type: "image/png" }); if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: "Liquidacion " + cl.nombre }); return; } } catch(e) {}
-      var url = URL.createObjectURL(blob); var a = document.createElement("a"); a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = nombre;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     }, "image/png");
-  }
-
-  function exportarClienteCSV() {
-    var cl = resumenPorCliente.find(function(c) { return (c.clienteId || c.nombre) === clienteSel; });
-    if (!cl || !mesActivo) return;
-    var sep = ";";
-    var head = ["Fecha", "Modo", "Bateas", "Toneladas", "Precio/tn", "Subtotal"];
-    var filas = cl.cargas.map(function(c) { return [fechaCorta(c.fecha), c.modo, c.bateas, Math.round(c.tn), c.precioTn != null ? c.precioTn : "A definir", c.ingreso != null ? Math.round(c.ingreso) : ""]; });
-    var total = ["TOTAL", "", cl.cargas.length + " cargas", Math.round(cl.tn), "", Math.round(cl.ingreso)];
-    var csv = "\uFEFF" + [head].concat(filas).concat([total]).map(function(r) { return r.join(sep); }).join("\n");
-    descargar("liquidacion-" + cl.nombre.replace(/\s+/g, "-") + "-" + mesActivo + ".csv", csv, "text/csv;charset=utf-8;");
   }
 
   async function compartirImagen() {
     if (!mesActivo) return;
     await esperarFuentes();
-    const cv = await dibujarResumen(mesActivo);
-    if (!cv) return;
+    const cv = await dibujarResumen(mesActivo); if (!cv) return;
+    const nombre = `el-retiro-resumen-${mesActivo}.png`;
     cv.toBlob(async (blob) => {
       if (!blob) return;
-      const nombre = `el-retiro-resumen-${mesActivo}.png`;
-      try {
-        const file = new File([blob], nombre, { type: "image/png" });
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: `Resumen ${mesLabel(mesActivo)}` });
-          return;
-        }
-      } catch {}
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = nombre;
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      try { const f = new File([blob], nombre, { type: "image/png" }); if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: `Resumen ${mesLabel(mesActivo)}` }); return; } } catch {}
+      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     }, "image/png");
+  }
+
+  async function descargarImagen() {
+    if (!mesActivo) return;
+    await esperarFuentes();
+    const cv = await dibujarResumen(mesActivo); if (!cv) return;
+    descargarCanvas(cv, `el-retiro-resumen-${mesActivo}.png`);
+  }
+
+  async function compartirImagenCliente() {
+    const cl = resumenPorCliente.find((c) => (c.clienteId || c.nombre) === clienteSel);
+    if (!cl || !mesActivo) return;
+    await esperarFuentes();
+    const cv = await dibujarResumenCliente(mesActivo, cl); if (!cv) return;
+    const nombre = `liquidacion-${cl.nombre.replace(/\s+/g, "-")}-${mesActivo}.png`;
+    cv.toBlob(async (blob) => {
+      if (!blob) return;
+      try { const f = new File([blob], nombre, { type: "image/png" }); if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: `Liquidación ${cl.nombre}` }); return; } } catch {}
+      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    }, "image/png");
+  }
+
+  async function descargarImagenCliente() {
+    const cl = resumenPorCliente.find((c) => (c.clienteId || c.nombre) === clienteSel);
+    if (!cl || !mesActivo) return;
+    await esperarFuentes();
+    const cv = await dibujarResumenCliente(mesActivo, cl); if (!cv) return;
+    descargarCanvas(cv, `liquidacion-${cl.nombre.replace(/\s+/g, "-")}-${mesActivo}.png`);
   }
 
   async function pdfResumen() {
     if (!mesActivo) return;
     await esperarFuentes();
-    const cv = await dibujarResumen(mesActivo);
-    if (!cv) return;
+    const cv = await dibujarResumen(mesActivo); if (!cv) return;
     const data = cv.toDataURL("image/png");
     const w = window.open("", "_blank");
-    if (!w) {
-      const a = document.createElement("a"); a.href = data; a.download = `el-retiro-resumen-${mesActivo}.png`;
-      document.body.appendChild(a); a.click(); a.remove();
-      return;
-    }
+    if (!w) { descargarCanvas(cv, `el-retiro-resumen-${mesActivo}.png`); return; }
     w.document.write(`<html><head><title>Resumen ${mesLabel(mesActivo)}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>@page{margin:12mm;}body{margin:0;text-align:center;}img{width:100%;max-width:760px;}</style></head><body><img src="${data}" onload="setTimeout(function(){window.print();},250)"/></body></html>`);
     w.document.close();
   }
@@ -1390,9 +1400,10 @@ export default function App() {
                       {resumenMeses.map((m) => <option key={m.key} value={m.key}>{mesLabel(m.key)}</option>)}
                     </select>
                   </div>
-                  <button className="tog" onClick={compartirImagen}>Compartir imagen</button>
+                  <button className="tog" onClick={compartirImagen}>Compartir</button>
+                  <button className="tog" onClick={descargarImagen}>Descargar</button>
                   <button className="tog" onClick={pdfResumen}>PDF</button>
-                  <button className="tog" onClick={exportarResumenCSV}>CSV (todos)</button>
+                  <button className="tog" onClick={exportarResumenCSV}>CSV</button>
                 </div>
                 {resumenPorCliente.length > 0 && (
                   <>
@@ -1404,7 +1415,8 @@ export default function App() {
                           {resumenPorCliente.map((c) => <option key={c.clienteId || c.nombre} value={c.clienteId || c.nombre}>{c.nombre} — {N(c.tn)} tn</option>)}
                         </select>
                       </div>
-                      <button className="tog" disabled={!clienteSel} onClick={compartirImagenCliente}>Compartir imagen</button>
+                      <button className="tog" disabled={!clienteSel} onClick={compartirImagenCliente}>Compartir</button>
+                      <button className="tog" disabled={!clienteSel} onClick={descargarImagenCliente}>Descargar</button>
                       <button className="tog" disabled={!clienteSel} onClick={exportarClienteCSV}>CSV</button>
                     </div>
                   </>
@@ -1447,7 +1459,7 @@ export default function App() {
 
               <div style={{ overflowX: "auto" }}>
                 <table className="reg">
-                  <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Bateas</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Ingreso</th><th style={{ textAlign: "right" }}>Socios</th><th style={{ textAlign: "right" }}>Margen</th></tr></thead>
+                  <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Bateas</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Ingreso bruto</th><th style={{ textAlign: "right" }}>Para socios</th><th style={{ textAlign: "right" }}>Para mí</th></tr></thead>
                 <tbody>
                   {resumenMeses.map((m) => (
                     <tr key={m.key}>
