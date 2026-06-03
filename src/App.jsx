@@ -7,14 +7,14 @@ import { initializeApp } from "firebase/app";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { getFirestore, doc, onSnapshot, setDoc } from "firebase/firestore";
 
-// ⚙️ PEGÁ ACÁ LA CONFIG DE TU PROYECTO (Firebase → Configuración del proyecto → Tus apps → SDK)
+// Config del proyecto Firebase (las claves web son públicas por diseño; la seguridad la dan las reglas + el login)
 const firebaseConfig = {
-apiKey: "AIzaSyCWeQ9rWcZGj_29LY14Ztb7fKXU0_6b6X8",
+  apiKey: "AIzaSyCWeQ9rWcZGj_29LY14Ztb7fKXU0_6b6X8",
   authDomain: "arenapp-63a04.firebaseapp.com",
   projectId: "arenapp-63a04",
   storageBucket: "arenapp-63a04.firebasestorage.app",
   messagingSenderId: "1040391625845",
-  appId: "1:1040391625845:web:4ea7857860180424ad6c3c"
+  appId: "1:1040391625845:web:4ea7857860180424ad6c3c",
 };
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -757,8 +757,13 @@ export default function App() {
       ) : !user ? (
         <div className="app" style={{ maxWidth: 430 }}>
           <div style={{ marginTop: 36, marginBottom: 22, textAlign: "center" }}>
-            <h1 style={{ margin: 0, fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 34, letterSpacing: "-0.02em", color: C.accent }}>EL RETIRO</h1>
-            <div className="label" style={{ marginTop: 8 }}>Panel de control · Arenera · Sol de Julio</div>
+            {logoOk ? (
+              <img src="/logo.png" alt="El Retiro" onError={() => setLogoOk(false)}
+                style={{ width: "min(240px, 70%)", height: "auto", display: "block", margin: "0 auto" }} />
+            ) : (
+              <h1 style={{ margin: 0, fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 34, letterSpacing: "-0.02em", color: C.accent }}>EL RETIRO</h1>
+            )}
+            <div className="label" style={{ marginTop: 12 }}>Panel de control · Arenera · Sol de Julio</div>
           </div>
           <div className="card">
             <div style={{ fontWeight: 700, fontSize: 19, marginBottom: 18, fontFamily: "Archivo, sans-serif" }}>{authMode === "signup" ? "Crear cuenta" : "Iniciar sesión"}</div>
