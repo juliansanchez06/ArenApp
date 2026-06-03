@@ -261,6 +261,12 @@ export default function App() {
   const [pPatente, setPPatente] = useState("");
   const [pPrecio, setPPrecio] = useState(DEFAULTS.precioBruta);
 
+  // edición inline de precio
+  const [editingRegId, setEditingRegId] = useState(null);
+  const [editPrecio, setEditPrecio] = useState("");
+  // cliente seleccionado para exportar
+  const [clienteSel, setClienteSel] = useState("");
+
   // form de cliente
   const [cNombre, setCNombre] = useState("");
   const [cLocalidad, setCLocalidad] = useState("");
@@ -421,6 +427,23 @@ export default function App() {
 
   const mesActivo = mesSel || (resumenMeses[0] ? resumenMeses[0].key : "");
 
+  const resumenPorCliente = useMemo(() => {
+    if (!mesActivo) return [];
+    const map = {};
+    for (const r of registros) {
+      if (r.fecha.slice(0, 7) !== mesActivo) continue;
+      const tn = r.tn != null ? r.tn : (parseFloat(r.bateas) || 0) * cfg.tnPorBatea;
+      const p = r.precioTn;
+      const ingreso = p != null ? tn * p : null;
+      const k = r.clienteId || r.cliente;
+      if (!map[k]) map[k] = { clienteId: r.clienteId, nombre: r.cliente, cargas: [], tn: 0, ingreso: 0, pendiente: false };
+      map[k].cargas.push({ fecha: r.fecha, bateas: r.bateas, tn, precioTn: p, modo: r.modo, patente: r.patente, ingreso });
+      map[k].tn += tn;
+      if (ingreso != null) map[k].ingreso += ingreso; else map[k].pendiente = true;
+    }
+    return Object.values(map).sort((a, b) => (a.nombre < b.nombre ? -1 : 1));
+  }, [registros, cfg, mesActivo]);
+
   // datos del calendario del mes visible
   const calData = useMemo(() => {
     const days = {};
@@ -461,13 +484,13 @@ export default function App() {
   const setBateasProg = (v) => { setPBateas(v); setPTn(String((parseFloat(v) || 0) * cfg.tnPorBatea)); };
 
   function resetFormCarga() {
-    setFBateas(1); setFTn(cfg.tnPorBatea); setFFromProg(null); setFPatente(""); setFPrecio(cfg.precioBruta);
+    setFBateas(1); setFTn(cfg.tnPorBatea); setFFromProg(null); setFPatente(""); setFPrecio("");
   }
 
   function registrar() {
     const b = parseFloat(fBateas) || 0;
     const tn = parseFloat(fTn) || 0;
-    const precio = parseFloat(fPrecio) || (fModo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
+    const precio = parseFloat(fPrecio) > 0 ? parseFloat(fPrecio) : null;
     if (tn <= 0 || !fClienteId) return;
     const cl = clientes.find((c) => String(c.id) === String(fClienteId));
     setRegistros((rs) => [
@@ -481,10 +504,16 @@ export default function App() {
   }
   function borrar(id) { setRegistros((rs) => rs.filter((r) => r.id !== id)); }
 
+  function guardarEditPrecio(id) {
+    const p = parseFloat(editPrecio);
+    setRegistros((rs) => rs.map((r) => r.id === id ? { ...r, precioTn: p > 0 ? p : null } : r));
+    setEditingRegId(null); setEditPrecio("");
+  }
+
   function programar() {
     const b = parseFloat(pBateas) || 0;
     const tn = parseFloat(pTn) || 0;
-    const precio = parseFloat(pPrecio) || (pModo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
+    const precio = parseFloat(pPrecio) > 0 ? parseFloat(pPrecio) : null;
     if (tn <= 0 || !pClienteId || !pFecha) return;
     const cl = clientes.find((c) => String(c.id) === String(pClienteId));
     setProgramadas((ps) => [
@@ -493,7 +522,7 @@ export default function App() {
         canal: cl ? cl.canal : "Socios", bateas: b, tn, precioTn: precio, modo: pModo,
         nota: pNota.trim(), patente: pPatente.trim() },
     ]);
-    setPBateas(1); setPTn(cfg.tnPorBatea); setPNota(""); setPClienteId(""); setPPatente(""); setPPrecio(cfg.precioBruta);
+    setPBateas(1); setPTn(cfg.tnPorBatea); setPNota(""); setPClienteId(""); setPPatente(""); setPPrecio("");
   }
   function descartarProgramada(id) { setProgramadas((ps) => ps.filter((p) => p.id !== id)); }
 
@@ -503,7 +532,7 @@ export default function App() {
     setFModo(p.modo); setFBateas(p.bateas);
     setFTn(p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea);
     setFPatente(p.patente || "");
-    setFPrecio(p.precioTn != null ? p.precioTn : (p.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta));
+    setFPrecio(p.precioTn != null ? String(p.precioTn) : "");
     setFFromProg(p.id);
     const el = document.getElementById("formCarga");
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -636,6 +665,90 @@ export default function App() {
   }
 
   async function esperarFuentes() { try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch {} }
+
+
+  async function dibujarResumenCliente(mesKey, clienteData) {
+    const rowH = 46, headerH = 220, footerH = 70;
+    const W = 900, H = headerH + rowH * (clienteData.cargas.length + 1) + footerH, s = 2;
+    const cv = document.createElement("canvas");
+    cv.width = W * s; cv.height = H * s;
+    const ctx = cv.getContext("2d");
+    ctx.scale(s, s);
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#540c18"; ctx.fillRect(0, 0, W, 10);
+    ctx.textBaseline = "alphabetic";
+    try {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.crossOrigin = "anonymous"; i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png"; });
+      const lh = 64, lw = Math.round(lh * img.naturalWidth / img.naturalHeight);
+      ctx.drawImage(img, (W - lw) / 2, 16, lw, lh);
+    } catch {
+      ctx.fillStyle = "#540c18"; ctx.font = "800 32px Archivo, Arial, sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("EL RETIRO", W / 2, 58); ctx.textAlign = "left";
+    }
+    ctx.fillStyle = "#7a736b"; ctx.font = "600 14px 'IBM Plex Mono', monospace"; ctx.textAlign = "center";
+    ctx.fillText("LIQUIDACION MENSUAL - " + mesLabel(mesKey).toUpperCase(), W / 2, 96);
+    ctx.fillStyle = "#1a1714"; ctx.font = "700 26px Archivo, Arial, sans-serif";
+    ctx.fillText(clienteData.nombre.toUpperCase(), W / 2, 132);
+    ctx.textAlign = "left";
+    ctx.strokeStyle = "#e6e2da"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(48, 152); ctx.lineTo(W - 48, 152); ctx.stroke();
+    const cols = [48, 170, 300, 420, 570, W - 48];
+    const aligns = ["left", "left", "right", "right", "right", "right"];
+    let ty = 186;
+    ["FECHA", "MODO", "BATEAS", "TONELADAS", "PRECIO/TN", "SUBTOTAL"].forEach(function(h, i) {
+      ctx.textAlign = aligns[i]; ctx.fillStyle = "#7a736b"; ctx.font = "600 12px IBM Plex Mono, monospace";
+      ctx.fillText(h, cols[i], ty);
+    });
+    ctx.beginPath(); ctx.moveTo(48, ty + 10); ctx.lineTo(W - 48, ty + 10); ctx.stroke();
+    ty += 32;
+    for (var ci = 0; ci < clienteData.cargas.length; ci++) {
+      var c = clienteData.cargas[ci];
+      var vals = [fechaCorta(c.fecha), c.modo, String(c.bateas), N(c.tn) + " tn", c.precioTn != null ? "$" + N(c.precioTn) : "A definir", c.ingreso != null ? "$" + N(c.ingreso) : "--"];
+      vals.forEach(function(v, i) {
+        ctx.textAlign = aligns[i];
+        ctx.fillStyle = (i === 4 && c.precioTn == null) ? "#ca8a04" : "#1a1714";
+        ctx.font = "500 14px Archivo, Arial, sans-serif";
+        ctx.fillText(v, cols[i], ty);
+      });
+      ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, ty + 10); ctx.lineTo(W - 48, ty + 10); ctx.stroke();
+      ty += rowH;
+    }
+    ctx.fillStyle = "#540c1812"; ctx.fillRect(40, ty - 4, W - 80, 54);
+    ctx.textAlign = "left"; ctx.fillStyle = "#1a1714"; ctx.font = "700 15px Archivo, Arial, sans-serif";
+    ctx.fillText("TOTAL", 60, ty + 22);
+    ctx.font = "500 13px IBM Plex Mono, monospace"; ctx.fillStyle = "#7a736b";
+    ctx.fillText(N(clienteData.tn) + " tn - " + clienteData.cargas.length + " carga(s)", 60, ty + 40);
+    ctx.textAlign = "right"; ctx.fillStyle = "#15803d"; ctx.font = "700 18px IBM Plex Mono, monospace";
+    ctx.fillText(clienteData.pendiente ? "$" + N(clienteData.ingreso) + " + pendiente" : "$" + N(clienteData.ingreso), W - 48, ty + 26);
+    ctx.textAlign = "left"; ctx.fillStyle = "#b0a89a"; ctx.font = "500 12px IBM Plex Mono, monospace";
+    ctx.fillText("Generado " + todayISO() + " - El Retiro - Sol de Julio", 48, H - 22);
+    return cv;
+  }
+
+  async function compartirImagenCliente() {
+    var cl = resumenPorCliente.find(function(c) { return (c.clienteId || c.nombre) === clienteSel; });
+    if (!cl || !mesActivo) return;
+    await esperarFuentes();
+    var cv = await dibujarResumenCliente(mesActivo, cl);
+    if (!cv) return;
+    var nombre = "liquidacion-" + cl.nombre.replace(/\s+/g, "-") + "-" + mesActivo + ".png";
+    cv.toBlob(async function(blob) {
+      if (!blob) return;
+      try { var f = new File([blob], nombre, { type: "image/png" }); if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: "Liquidacion " + cl.nombre }); return; } } catch(e) {}
+      var url = URL.createObjectURL(blob); var a = document.createElement("a"); a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    }, "image/png");
+  }
+
+  function exportarClienteCSV() {
+    var cl = resumenPorCliente.find(function(c) { return (c.clienteId || c.nombre) === clienteSel; });
+    if (!cl || !mesActivo) return;
+    var sep = ";";
+    var head = ["Fecha", "Modo", "Bateas", "Toneladas", "Precio/tn", "Subtotal"];
+    var filas = cl.cargas.map(function(c) { return [fechaCorta(c.fecha), c.modo, c.bateas, Math.round(c.tn), c.precioTn != null ? c.precioTn : "A definir", c.ingreso != null ? Math.round(c.ingreso) : ""]; });
+    var total = ["TOTAL", "", cl.cargas.length + " cargas", Math.round(cl.tn), "", Math.round(cl.ingreso)];
+    var csv = "\uFEFF" + [head].concat(filas).concat([total]).map(function(r) { return r.join(sep); }).join("\n");
+    descargar("liquidacion-" + cl.nombre.replace(/\s+/g, "-") + "-" + mesActivo + ".csv", csv, "text/csv;charset=utf-8;");
+  }
 
   async function compartirImagen() {
     if (!mesActivo) return;
@@ -1127,6 +1240,19 @@ export default function App() {
               Viene de una carga programada. Revisá las <b>toneladas reales</b> (por si vino una batea más chica) y tocá Registrar.
             </div>
           )}
+          {editingRegId && (() => {
+            const r = registros.find((x) => x.id === editingRegId);
+            return r ? (
+              <div style={{ background: `${C.amarillo}12`, border: `1px solid ${C.amarillo}`, borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
+                <div className="label" style={{ marginBottom: 8 }}>Editar precio — {r.cliente} · {fechaCorta(r.fecha)}</div>
+                <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                  <Field label="Precio/tn" value={editPrecio} onChange={setEditPrecio} suffix="$" />
+                  <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={() => guardarEditPrecio(editingRegId)}>Guardar</button>
+                  <button className="tog" onClick={() => { setEditingRegId(null); setEditPrecio(""); }}>Cancelar</button>
+                </div>
+              </div>
+            ) : null;
+          })()}
           <button className="btn" style={{ marginBottom: 18 }} onClick={registrar}>+ Registrar carga</button>
 
           {registros.length === 0 ? (
@@ -1144,12 +1270,15 @@ export default function App() {
                         <td data-label="Modo"><span className="pill" style={{ background: r.modo === "grillada" ? `${C.accent}1a` : `${C.ink}0d`, color: r.modo === "grillada" ? C.accent : C.ink }}>{r.modo}</span></td>
                         <td data-label="Bateas" className="num">{r.bateas}</td>
                         <td data-label="Tn" className="num">{N(c.tn)}</td>
-                        <td data-label="$/tn" className="num" style={{ fontSize: 12.5 }}>{$(regPrecio(r))}</td>
+                        <td data-label="$/tn" className="num" style={{ fontSize: 12.5, color: r.precioTn == null ? C.amarillo : C.ink }}>{r.precioTn != null ? $(r.precioTn) : "A definir"}</td>
                         <td data-label="Cliente">{r.cliente}</td>
                         <td data-label="Patente" className="num" style={{ fontSize: 12.5 }}>{r.patente || "—"}</td>
                         <td data-label="Canal"><span className="pill" style={{ background: r.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: r.canal === "Directo" ? C.verde : C.amarillo }}>{r.canal}</span></td>
                         <td data-label="Margen" className="num" style={{ textAlign: "right", color: c.margen >= 0 ? C.verde : C.rojo }}>{$(c.margen)}</td>
-                        <td data-label="" style={{ textAlign: "right" }}><button className="del" onClick={() => borrar(r.id)}>×</button></td>
+                        <td data-label="" style={{ textAlign: "right" }}>
+                          <button className="del" style={{ marginRight: 6, color: C.accent }} title="Editar precio" onClick={() => { setEditingRegId(r.id); setEditPrecio(r.precioTn != null ? String(r.precioTn) : ""); }}>✎</button>
+                          <button className="del" onClick={() => borrar(r.id)}>×</button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1166,10 +1295,10 @@ export default function App() {
           ) : (
             <>
               <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14, marginBottom: 18 }}>
-                <div className="label" style={{ marginBottom: 10 }}>Compartir resumen de un mes</div>
+                <div className="label" style={{ marginBottom: 10 }}>Resumen total del mes</div>
                 <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                   <div className="inputWrap selectWrap" style={{ flex: "1 1 160px" }}>
-                    <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={mesActivo} onChange={(e) => setMesSel(e.target.value)}>
+                    <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={mesActivo} onChange={(e) => { setMesSel(e.target.value); setClienteSel(""); }}>
                       {resumenMeses.map((m) => <option key={m.key} value={m.key}>{mesLabel(m.key)}</option>)}
                     </select>
                   </div>
@@ -1177,7 +1306,57 @@ export default function App() {
                   <button className="tog" onClick={pdfResumen}>PDF</button>
                   <button className="tog" onClick={exportarResumenCSV}>CSV (todos)</button>
                 </div>
+                {resumenPorCliente.length > 0 && (
+                  <>
+                    <div className="label" style={{ marginTop: 14, marginBottom: 8 }}>Liquidación por cliente</div>
+                    <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                      <div className="inputWrap selectWrap" style={{ flex: "1 1 160px" }}>
+                        <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={clienteSel} onChange={(e) => setClienteSel(e.target.value)}>
+                          <option value="">Elegí cliente…</option>
+                          {resumenPorCliente.map((c) => <option key={c.clienteId || c.nombre} value={c.clienteId || c.nombre}>{c.nombre} — {N(c.tn)} tn</option>)}
+                        </select>
+                      </div>
+                      <button className="tog" disabled={!clienteSel} onClick={compartirImagenCliente}>Compartir imagen</button>
+                      <button className="tog" disabled={!clienteSel} onClick={exportarClienteCSV}>CSV</button>
+                    </div>
+                  </>
+                )}
               </div>
+
+              {/* Tabla por cliente del mes seleccionado */}
+              {resumenPorCliente.length > 0 && (
+                <div style={{ marginBottom: 18 }}>
+                  <div className="label" style={{ marginBottom: 10 }}>Desglose por cliente — {mesLabel(mesActivo)}</div>
+                  {resumenPorCliente.map((cl) => (
+                    <div key={cl.clienteId || cl.nombre} style={{ border: `1px solid ${C.line}`, borderRadius: 12, marginBottom: 10, overflow: "hidden" }}>
+                      <div style={{ background: C.panel, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: 15 }}>{cl.nombre}</span>
+                        <div className="row" style={{ gap: 16 }}>
+                          <span className="num" style={{ fontSize: 13, color: C.ink2 }}>{N(cl.tn)} tn · {cl.cargas.length} carga(s)</span>
+                          <span className="num" style={{ fontSize: 15, color: cl.pendiente ? C.amarillo : C.verde, fontWeight: 700 }}>{cl.pendiente ? `$${N(cl.ingreso)} + pend.` : $(cl.ingreso)}</span>
+                        </div>
+                      </div>
+                      <div style={{ overflowX: "auto" }}>
+                        <table className="reg" style={{ fontSize: 13 }}>
+                          <thead><tr><th>Fecha</th><th>Modo</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>$/tn</th><th style={{ textAlign: "right" }}>Subtotal</th></tr></thead>
+                          <tbody>
+                            {cl.cargas.map((c, i) => (
+                              <tr key={i}>
+                                <td data-label="Fecha" className="num" style={{ fontSize: 12 }}>{fechaCorta(c.fecha)}</td>
+                                <td data-label="Modo"><span className="pill" style={{ background: c.modo === "grillada" ? `${C.accent}1a` : `${C.ink}0d`, color: c.modo === "grillada" ? C.accent : C.ink }}>{c.modo}</span></td>
+                                <td data-label="Tn" className="num" style={{ textAlign: "right" }}>{N(c.tn)}</td>
+                                <td data-label="$/tn" className="num" style={{ textAlign: "right", color: c.precioTn == null ? C.amarillo : C.ink }}>{c.precioTn != null ? $(c.precioTn) : "A definir"}</td>
+                                <td data-label="Subtotal" className="num" style={{ textAlign: "right", color: c.ingreso != null ? C.verde : C.ink2 }}>{c.ingreso != null ? $(c.ingreso) : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div style={{ overflowX: "auto" }}>
                 <table className="reg">
                   <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Bateas</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Ingreso</th><th style={{ textAlign: "right" }}>Socios</th><th style={{ textAlign: "right" }}>Margen</th></tr></thead>
