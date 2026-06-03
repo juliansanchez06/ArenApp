@@ -150,6 +150,22 @@ const C = {
   verde: "#15803d", amarillo: "#ca8a04", rojo: "#dc2626",
 };
 
+// Color por sección — punto + borde superior de la card
+const TC = {
+  "Decisión":    { dot: "#2563eb", bg: "#eff6ff" },
+  "Calculadora": { dot: "#7c3aed", bg: "#f5f3ff" },
+  "Cartera":     { dot: "#059669", bg: "#ecfdf5" },
+  "Agenda":      { dot: "#d97706", bg: "#fffbeb" },
+  "Operación":   { dot: "#ea580c", bg: "#fff7ed" },
+  "Resumen":     { dot: "#4f46e5", bg: "#eef2ff" },
+  "Calendario":  { dot: "#0d9488", bg: "#f0fdfa" },
+  "Tablero":     { dot: "#db2777", bg: "#fdf2f8" },
+  "Proyección":  { dot: "#65a30d", bg: "#f7fee7" },
+  "Resultado":   { dot: "#15803d", bg: "#f0fdf4" },
+  "Parámetros":  { dot: "#475569", bg: "#f8fafc" },
+  "Estructura":  { dot: "#c2410c", bg: "#fff7ed" },
+};
+
 function load(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
   catch { return fallback; }
@@ -169,12 +185,13 @@ function Dot({ color }) {
 }
 
 function Section({ tag, title, right, children }) {
+  const tc = TC[tag] || { dot: C.accent, bg: C.panel };
   return (
-    <section className="card">
+    <section className="card" style={{ borderTop: `3px solid ${tc.dot}`, background: tc.bg }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 18 }}>
         <div className="row" style={{ gap: 10, alignItems: "center" }}>
-          <span style={{ width: 8, height: 8, background: C.accent, display: "inline-block" }} />
-          <span className="label">{tag}</span>
+          <span style={{ width: 8, height: 8, background: tc.dot, display: "inline-block", borderRadius: 2 }} />
+          <span className="label" style={{ color: tc.dot }}>{tag}</span>
         </div>
         {right}
       </div>
@@ -1024,7 +1041,7 @@ export default function App() {
               <div className="label" style={{ color: C.accent, marginTop: 10 }}>Panel de control · Arenera · Sol de Julio</div>
             </div>
             <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
+              <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar costos" : "Editar costos generales"}</button>
               <button className="tog" onClick={() => signOut(auth)}>Salir</button>
             </div>
           </div>
@@ -1424,60 +1441,6 @@ export default function App() {
                       </tr>
                     );
                   })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Section>
-
-        {/* GASTOS FIJOS */}
-        <Section tag="Estructura" title="Gastos fijos mensuales">
-          <div style={{ fontSize: 13, color: C.ink2, marginBottom: 14 }}>Costos que pagás todos los meses sin importar cuánto vendas: cuota de la pala, seguro, salarios fijos, etc. La app los descuenta del margen para mostrarte el resultado real.</div>
-          {editingGastoId && (() => {
-            const g = gastosFijos.find((x) => x.id === editingGastoId);
-            return g ? (
-              <div style={{ background: `${C.accent}0c`, border: `1px solid ${C.accent}44`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
-                <div className="label" style={{ marginBottom: 8 }}>Editando: {g.nombre}</div>
-                <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-                  <label style={{ flex: "1 1 200px", display: "block" }}>
-                    <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Concepto</span>
-                    <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={editGNombre} onChange={(e) => setEditGNombre(e.target.value)} /></div>
-                  </label>
-                  <Field label="Monto mensual" value={editGMonto} onChange={setEditGMonto} suffix="$" />
-                  <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={guardarEditGasto}>Guardar</button>
-                  <button className="tog" onClick={() => setEditingGastoId(null)}>Cancelar</button>
-                </div>
-              </div>
-            ) : null;
-          })()}
-          <div className="grid-form" style={{ marginBottom: 12 }}>
-            <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Concepto</span>
-              <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={gNombre} placeholder="Ej: Cuota pala, Seguro…" onChange={(e) => setGNombre(e.target.value)} /></div>
-            </label>
-            <Field label="Monto mensual" value={gMonto} onChange={setGMonto} suffix="$" />
-            <button className="btn" onClick={agregarGasto} style={{ alignSelf: "flex-end" }}>+ Agregar</button>
-          </div>
-          {gastosFijos.length > 0 && (
-            <div style={{ overflowX: "auto", marginBottom: 8 }}>
-              <table className="reg">
-                <thead><tr><th>Concepto</th><th style={{ textAlign: "right" }}>Por mes</th><th></th></tr></thead>
-                <tbody>
-                  {gastosFijos.map((g) => (
-                    <tr key={g.id}>
-                      <td data-label="Concepto" style={{ fontWeight: 500 }}>{g.nombre}</td>
-                      <td data-label="Por mes" className="num" style={{ textAlign: "right", color: C.rojo }}>{$(g.monto)}</td>
-                      <td style={{ textAlign: "right" }}>
-                        <button className="del" style={{ marginRight: 6, color: C.accent }} onClick={() => abrirEditGasto(g)}>✎</button>
-                        <button className="del" onClick={() => borrarGasto(g.id)}>×</button>
-                      </td>
-                    </tr>
-                  ))}
-                  <tr style={{ borderTop: `2px solid ${C.line}` }}>
-                    <td style={{ fontWeight: 700 }}>Total fijos</td>
-                    <td className="num" style={{ textAlign: "right", color: C.rojo, fontWeight: 700 }}>{$(totalFijos)}</td>
-                    <td></td>
-                  </tr>
                 </tbody>
               </table>
             </div>
