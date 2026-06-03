@@ -41,7 +41,8 @@ const DEFAULTS = {
   comisionSocios: 30,       // %
   regalia: 3,               // % de boca de mina
   tnPorBatea: 30,           // tn
-  objetivoMes: 12,          // bateas/mes
+  objetivoBruta: 10,        // bateas bruta/mes
+  objetivoGrillada: 2,      // bateas grillada/mes
   gasoilPrecio: 1800,       // $/L
   palaConsumo: 9,           // L/h
   palaReserva: 11400,       // $/h (reparación + amortización pala)
@@ -86,13 +87,15 @@ function calcDia(cfg, modo, tn, precioTn = null, comisionPct = null, sinCosto = 
 }
 
 function amortGrillaTn(cfg) {
-  const tnVida = cfg.tnPorBatea * cfg.objetivoMes * 12 * cfg.vidaGrillaAnios;
+  const totalBatMes = (cfg.objetivoBruta || 0) + (cfg.objetivoGrillada || 0);
+  const tnVida = cfg.tnPorBatea * totalBatMes * 12 * cfg.vidaGrillaAnios;
   return tnVida ? cfg.costoGrilla / tnVida : 0;
 }
 
-// neto $/tn de cada modo, a la escala del objetivo mensual
+// neto $/tn de cada modo usando el objetivo de ese modo
 function netoTn(cfg, modo) {
-  const r = calcDia(cfg, modo, cfg.objetivoMes * cfg.tnPorBatea);
+  const bat = modo === "grillada" ? (cfg.objetivoGrillada || 1) : (cfg.objetivoBruta || 1);
+  const r = calcDia(cfg, modo, bat * cfg.tnPorBatea);
   return r.margenTn;
 }
 
@@ -100,7 +103,7 @@ function netoTn(cfg, modo) {
 function breakEvenGrillada(cfg) {
   const factor = 1 - cfg.comisionSocios / 100 - cfg.regalia / 100;
   if (factor <= 0) return Infinity;
-  const tn = cfg.objetivoMes * cfg.tnPorBatea;
+  const tn = (cfg.objetivoGrillada || 1) * cfg.tnPorBatea;
   const opG =
     (cfg.horasPalaGrillada * cfg.palaConsumo * cfg.gasoilPrecio +
       cfg.horasPalaGrillada * cfg.palaReserva +
@@ -114,7 +117,7 @@ function breakEvenGrillada(cfg) {
 function breakEvenBruta(cfg) {
   const factor = 1 - cfg.comisionSocios / 100 - cfg.regalia / 100;
   if (factor <= 0) return Infinity;
-  const tn = cfg.objetivoMes * cfg.tnPorBatea;
+  const tn = (cfg.objetivoBruta || 1) * cfg.tnPorBatea;
   const opB =
     (cfg.horasPalaBruta * cfg.palaConsumo * cfg.gasoilPrecio +
       cfg.horasPalaBruta * cfg.palaReserva +
@@ -238,7 +241,8 @@ export default function App() {
   const [programadas, setProgramadas] = useState(() => load("arenera_prog_v1", []));
   const [gastosFijos, setGastosFijos] = useState(() => load("arenera_gastos_v1", []));
   const [modo, setModo] = useState("bruta");
-  const [bateas, setBateas] = useState(DEFAULTS.objetivoMes);
+  const [bateasB, setBateasB] = useState(DEFAULTS.objetivoBruta);
+  const [bateasG, setBateasG] = useState(DEFAULTS.objetivoGrillada);
   const [showCfg, setShowCfg] = useState(false);
   const [logoOk, setLogoOk] = useState(true);
   const [cal, setCal] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
@@ -372,7 +376,6 @@ export default function App() {
   // precio cerrado de una carga: usa el guardado, o cae al supuesto actual (cargas viejas)
   const regPrecio = (r) => r.precioTn != null ? r.precioTn : (r.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
 
-  const dia = useMemo(() => calcDia(cfg, modo, bateas * cfg.tnPorBatea), [cfg, modo, bateas]);
   const beG = useMemo(() => breakEvenGrillada(cfg), [cfg]);
   const beB = useMemo(() => breakEvenBruta(cfg), [cfg]);
   const netoB = useMemo(() => netoTn(cfg, "bruta"), [cfg]);
@@ -421,11 +424,11 @@ export default function App() {
     alertas.push({ color: C.amarillo, t: "Falta confirmar precio de grillada", d: `Llamá al corralón. Grillar conviene solo desde ~${$(beG)}/tn.` });
   if (stats.tnMes > 0 && stats.pctDir < 20)
     alertas.push({ color: C.amarillo, t: "Dependés de los socios", d: `Solo ${N(stats.pctDir)}% de las ventas del mes son directas. Cada tn directa recupera ${$(cfg.precioBruta * cfg.comisionSocios / 100)}/tn.` });
-  if (stats.batMes >= cfg.objetivoMes)
+  if (stats.batMes >= cfg.objetivoBruta + cfg.objetivoGrillada)
     alertas.push({ color: C.verde, t: "Objetivo mensual cumplido", d: `${stats.batMes} bateas este mes. Cada batea extra el mismo día deja casi puro margen.` });
 
   const semDir = stats.pctDir > 50 ? C.verde : stats.pctDir >= 20 ? C.amarillo : C.rojo;
-  const semBat = stats.batMes >= cfg.objetivoMes ? C.verde : stats.batMes >= Math.round(cfg.objetivoMes * 0.5) ? C.amarillo : C.rojo;
+  const semBat = stats.batMes >= cfg.objetivoBruta + cfg.objetivoGrillada ? C.verde : stats.batMes >= Math.round(cfg.objetivoBruta + cfg.objetivoGrillada * 0.5) ? C.amarillo : C.rojo;
   const semMar = stats.margenMes > 0 ? C.verde : stats.margenMes < 0 ? C.rojo : C.amarillo;
 
   // historial por cliente (ordenado por margen, mejores arriba)
@@ -509,9 +512,12 @@ export default function App() {
     setCal((c) => { let m = c.m + delta, y = c.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } return { y, m }; });
   }
 
-  // proyección
-  const proyMes = calcDia(cfg, modo, cfg.objetivoMes * cfg.tnPorBatea).margen;
+  // proyección: suma bruta + grillada con sus objetivos propios
+  const proyB = calcDia(cfg, "bruta", cfg.objetivoBruta * cfg.tnPorBatea);
+  const proyG = calcDia(cfg, "grillada", cfg.objetivoGrillada * cfg.tnPorBatea);
+  const proyMes = proyB.margen + proyG.margen;
   const proyAnio = proyMes * 12;
+  const proyTotalBat = (cfg.objetivoBruta || 0) + (cfg.objetivoGrillada || 0);
 
   // al cambiar bateas, autocompleta toneladas con la batea estándar (editable aparte)
   const setBateasReg = (v) => { setFBateas(v); setFTn(String((parseFloat(v) || 0) * cfg.tnPorBatea)); };
@@ -631,9 +637,9 @@ export default function App() {
   }
 
   function fijarObjetivo() {
-    const val = parseFloat(bateas) || 1;
-    setCfg((c) => ({ ...c, objetivoMes: val }));
-    setCfgDraft((d) => ({ ...d, objetivoMes: val }));
+    const vB = parseFloat(bateasB) || 0, vG = parseFloat(bateasG) || 0;
+    setCfg((c) => ({ ...c, objetivoBruta: vB, objetivoGrillada: vG }));
+    setCfgDraft((d) => ({ ...d, objetivoBruta: vB, objetivoGrillada: vG }));
   }
 
   function elegirCliente(id) {
@@ -1056,7 +1062,8 @@ export default function App() {
               <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" />
               <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
               <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
-              <Field label="Objetivo mensual" value={cfgDraft.objetivoMes} onChange={setD("objetivoMes")} suffix="bateas" />
+              <Field label="Objetivo bruta/mes" value={cfgDraft.objetivoBruta} onChange={setD("objetivoBruta")} suffix="bateas" />
+              <Field label="Objetivo grillada/mes" value={cfgDraft.objetivoGrillada} onChange={setD("objetivoGrillada")} suffix="bateas" />
               <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
               <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" />
               <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" />
@@ -1096,7 +1103,7 @@ export default function App() {
         <div className="grid-kpi" style={{ marginBottom: 22 }}>
           <Kpi label="Margen del mes" value={$(stats.margenMes)} sub={`${N(stats.tnMes)} tn cargadas`} color={semMar} />
           <Kpi label="Ventas directas" value={`${N(stats.pctDir)}%`} sub="cuanto más alto, más recuperás del 30%" color={semDir} />
-          <Kpi label="Bateas este mes" value={`${stats.batMes} / ${cfg.objetivoMes}`} sub="objetivo mensual" color={semBat} />
+          <Kpi label="Bateas este mes" value={`${stats.batMes} / ${cfg.objetivoBruta + cfg.objetivoGrillada}`} sub="objetivo mensual" color={semBat} />
           <Kpi label="Comisión socios (mes)" value={$(stats.comMes)} sub="tu mayor costo" color={C.accent} />
         </div>
 
@@ -1122,41 +1129,62 @@ export default function App() {
           </Section>
 
           {/* Calculadora del día */}
-          <Section tag="Calculadora" title="Día de carga"
-            right={
-              <div className="row" style={{ gap: 0 }}>
-                <button className={"tog" + (modo === "bruta" ? " on" : "")} style={{ borderRadius: "10px 0 0 10px" }} onClick={() => setModo("bruta")}>Bruta</button>
-                <button className={"tog" + (modo === "grillada" ? " on" : "")} style={{ borderRadius: "0 10px 10px 0", borderLeft: 0 }} onClick={() => setModo("grillada")}>Grillada</button>
-              </div>
-            }>
-            <div style={{ marginBottom: 16 }}>
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                <span className="label">Bateas a cargar</span>
-                <div className="row" style={{ gap: 10, alignItems: "center" }}>
-                  <span className="num" style={{ fontSize: 18, color: C.accent }}>{bateas} · {N(dia.tn)} tn</span>
-                  <button className="tog" style={{ fontSize: 11, padding: "5px 10px" }} title={`Fijar ${bateas} como objetivo mensual`} onClick={fijarObjetivo}>{bateas === cfg.objetivoMes ? "✓ objetivo" : "Fijar objetivo"}</button>
-                </div>
-              </div>
-              <input type="range" min={1} max={30} value={bateas} onChange={(e) => setBateas(parseInt(e.target.value))}
-                style={{ width: "100%", accentColor: C.accent }} />
-              <div style={{ fontSize: 12, color: C.ink2, marginTop: 6, fontFamily: "'IBM Plex Mono',monospace" }}>Objetivo actual: <b style={{ color: C.ink }}>{cfg.objetivoMes} bateas/mes</b></div>
-            </div>
-            <table style={{ width: "100%" }} className="brk">
-              <tbody>
-                <tr><td>Ingreso bruto</td><td className="num">{$(dia.ingresoBruto)}</td></tr>
-                <tr><td>− Socios ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(dia.comision)}</td></tr>
-                <tr><td>− Gasoil + pala</td><td className="num" style={{ color: C.rojo }}>−{N(dia.gasoil + dia.reserva)}</td></tr>
-                <tr><td>− Mano de obra + varios</td><td className="num" style={{ color: C.rojo }}>−{N(dia.manoObra + dia.varios)}</td></tr>
-                <tr><td>− Regalía{dia.amortGrilla ? " + amort. grilla" : ""}</td><td className="num" style={{ color: C.rojo }}>−{N(dia.regaliaMonto + dia.amortGrilla)}</td></tr>
-              </tbody>
-            </table>
-            <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginTop: 14, paddingTop: 14, borderTop: `2px solid ${C.ink}` }}>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Margen del día</span>
-              <span className="num" style={{ fontSize: 26, color: dia.margen >= 0 ? C.verde : C.rojo }}>{$(dia.margen)}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", color: C.ink2, fontSize: 12.5, marginTop: 6 }}>
-              <span>{$(bateas ? dia.margen / bateas : 0)} / batea</span><span>{$(dia.margenTn)} / tn</span>
-            </div>
+          <Section tag="Calculadora" title="Día de carga">
+            {(() => {
+              const diaB = calcDia(cfg, "bruta", bateasB * cfg.tnPorBatea);
+              const diaG = calcDia(cfg, "grillada", bateasG * cfg.tnPorBatea);
+              const total = {
+                tn: diaB.tn + diaG.tn,
+                ingresoBruto: diaB.ingresoBruto + diaG.ingresoBruto,
+                comision: diaB.comision + diaG.comision,
+                gasoil: diaB.gasoil + diaG.gasoil, reserva: diaB.reserva + diaG.reserva,
+                manoObra: diaB.manoObra + diaG.manoObra, varios: diaB.varios + diaG.varios,
+                regaliaMonto: diaB.regaliaMonto + diaG.regaliaMonto,
+                amortGrilla: diaG.amortGrilla, margen: diaB.margen + diaG.margen,
+              };
+              const totalBat = bateasB + bateasG;
+              const yaFijado = bateasB === (cfg.objetivoBruta || 0) && bateasG === (cfg.objetivoGrillada || 0);
+              return (
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                      <span className="label" style={{ color: "#2563eb" }}>Bateas bruta</span>
+                      <span className="num" style={{ fontSize: 16, color: "#2563eb" }}>{bateasB} bat · {N(diaB.tn)} tn</span>
+                    </div>
+                    <input type="range" min={0} max={30} value={bateasB} onChange={(e) => setBateasB(parseInt(e.target.value))} style={{ width: "100%", accentColor: "#2563eb" }} />
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                      <span className="label" style={{ color: "#7c3aed" }}>Bateas grillada</span>
+                      <span className="num" style={{ fontSize: 16, color: "#7c3aed" }}>{bateasG} bat · {N(diaG.tn)} tn</span>
+                    </div>
+                    <input type="range" min={0} max={20} value={bateasG} onChange={(e) => setBateasG(parseInt(e.target.value))} style={{ width: "100%", accentColor: "#7c3aed" }} />
+                  </div>
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                    <span className="num" style={{ fontSize: 13, color: C.ink2 }}>Total: <b style={{ color: C.ink }}>{totalBat} bat · {N(total.tn)} tn</b></span>
+                    <button className="tog" style={{ fontSize: 11, padding: "5px 10px" }} onClick={fijarObjetivo}>{yaFijado ? `✓ objetivo` : `Fijar ${bateasB}B + ${bateasG}G como objetivo`}</button>
+                  </div>
+                  <table style={{ width: "100%" }} className="brk">
+                    <tbody>
+                      <tr><td>Ingreso bruto</td><td className="num">{$(total.ingresoBruto)}</td></tr>
+                      <tr><td>− Socios ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(total.comision)}</td></tr>
+                      <tr><td>− Gasoil + pala</td><td className="num" style={{ color: C.rojo }}>−{N(total.gasoil + total.reserva)}</td></tr>
+                      <tr><td>− Mano de obra + varios</td><td className="num" style={{ color: C.rojo }}>−{N(total.manoObra + total.varios)}</td></tr>
+                      <tr><td>− Regalía{total.amortGrilla ? " + amort. grilla" : ""}</td><td className="num" style={{ color: C.rojo }}>−{N(total.regaliaMonto + total.amortGrilla)}</td></tr>
+                    </tbody>
+                  </table>
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginTop: 14, paddingTop: 14, borderTop: `2px solid ${C.ink}` }}>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>Margen combinado</span>
+                    <span className="num" style={{ fontSize: 26, color: total.margen >= 0 ? C.verde : C.rojo }}>{$(total.margen)}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 8, fontSize: 12.5 }}>
+                    {bateasB > 0 && <span style={{ color: "#2563eb" }}>Bruta: {$(diaB.margen / bateasB)}/bat</span>}
+                    {bateasG > 0 && <span style={{ color: "#7c3aed" }}>Grillada: {$(diaG.margen / bateasG)}/bat</span>}
+                    {total.tn > 0 && <span style={{ color: C.ink2 }}>{$(total.margen / total.tn)}/tn</span>}
+                  </div>
+                </>
+              );
+            })()}
           </Section>
         </div>
 
@@ -1622,11 +1650,16 @@ export default function App() {
         </Section>
 
         {/* PROYECCIÓN */}
-        <Section tag="Proyección" title={`Si cargás ${cfg.objetivoMes} bateas/mes (${modo})`}>
+        <Section tag="Proyección" title={`${cfg.objetivoBruta} bruta + ${cfg.objetivoGrillada} grillada por mes`}>
           <div className="grid-3">
-            <Kpi label="Por mes" value={$(proyMes)} sub={`${cfg.objetivoMes} bateas · ${N(cfg.objetivoMes * cfg.tnPorBatea)} tn`} color={C.accent} />
+            <Kpi label="Bruta (mes)" value={$(proyB.margen)} sub={`${cfg.objetivoBruta} bat · ${N(proyB.tn)} tn`} color="#2563eb" />
+            <Kpi label="Grillada (mes)" value={$(proyG.margen)} sub={`${cfg.objetivoGrillada} bat · ${N(proyG.tn)} tn`} color="#7c3aed" />
+            <Kpi label="Total del mes" value={$(proyMes)} sub={`${proyTotalBat} bateas en total`} color={C.verde} />
+          </div>
+          <div className="grid-3" style={{ marginTop: 12 }}>
             <Kpi label="Por año" value={$(proyAnio)} sub="12 meses" color={C.accent} />
-            <Kpi label="Por batea" value={$(proyMes / (cfg.objetivoMes || 1))} sub="margen promedio" color={C.accent} />
+            <Kpi label="Bruta — por batea" value={$(cfg.objetivoBruta ? proyB.margen / cfg.objetivoBruta : 0)} sub="margen" color="#2563eb" />
+            <Kpi label="Grillada — por batea" value={$(cfg.objetivoGrillada ? proyG.margen / cfg.objetivoGrillada : 0)} sub="margen" color="#7c3aed" />
           </div>
         </Section>
 
