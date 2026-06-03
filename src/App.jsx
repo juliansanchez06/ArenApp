@@ -9,12 +9,12 @@ import { getFirestore, doc, onSnapshot, setDoc } from "firebase/firestore";
 
 // ⚙️ PEGÁ ACÁ LA CONFIG DE TU PROYECTO (Firebase → Configuración del proyecto → Tus apps → SDK)
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
-  authDomain: "TU_PROYECTO.firebaseapp.com",
-  projectId: "TU_PROYECTO",
-  storageBucket: "TU_PROYECTO.firebasestorage.app",
-  messagingSenderId: "TU_SENDER_ID",
-  appId: "TU_APP_ID",
+apiKey: "AIzaSyCWeQ9rWcZGj_29LY14Ztb7fKXU0_6b6X8",
+  authDomain: "arenapp-63a04.firebaseapp.com",
+  projectId: "arenapp-63a04",
+  storageBucket: "arenapp-63a04.firebasestorage.app",
+  messagingSenderId: "1040391625845",
+  appId: "1:1040391625845:web:4ea7857860180424ad6c3c"
 };
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
