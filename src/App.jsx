@@ -59,7 +59,7 @@ const DEFAULTS = {
 /* ────────────────────────────────────────────────────────────
    MOTOR DE CÁLCULO
    ──────────────────────────────────────────────────────────── */
-function calcDia(cfg, modo, tn, precioTn = null, comisionPct = null) {
+function calcDia(cfg, modo, tn, precioTn = null, comisionPct = null, sinCosto = false) {
   const precio = precioTn != null ? precioTn : (modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
   const ingresoBruto = tn * precio;
   const comision = ingresoBruto * ((comisionPct != null ? comisionPct : cfg.comisionSocios) / 100);
@@ -70,16 +70,17 @@ function calcDia(cfg, modo, tn, precioTn = null, comisionPct = null) {
   const jornales = modo === "grillada" ? cfg.jornalesGrillada : cfg.jornalesBruta;
   const varios = modo === "grillada" ? cfg.variosGrillada : cfg.variosBruta;
 
-  const gasoil = horas * cfg.palaConsumo * cfg.gasoilPrecio;
-  const reserva = horas * cfg.palaReserva;
-  const manoObra = jornales * cfg.jornal;
-  const amortGrilla = modo === "grillada" ? amortGrillaTn(cfg) * tn : 0;
+  const gasoil = sinCosto ? 0 : horas * cfg.palaConsumo * cfg.gasoilPrecio;
+  const reserva = sinCosto ? 0 : horas * cfg.palaReserva;
+  const manoObra = sinCosto ? 0 : jornales * cfg.jornal;
+  const variosN = sinCosto ? 0 : varios;
+  const amortGrilla = (!sinCosto && modo === "grillada") ? amortGrillaTn(cfg) * tn : 0;
 
-  const costoTotal = gasoil + reserva + manoObra + varios + regaliaMonto + amortGrilla;
+  const costoTotal = gasoil + reserva + manoObra + variosN + regaliaMonto + amortGrilla;
   const margen = ingresoNeto - costoTotal;
   return {
     tn, precio, ingresoBruto, comision, regaliaMonto, ingresoNeto,
-    gasoil, reserva, manoObra, varios, amortGrilla, costoTotal,
+    gasoil, reserva, manoObra, varios: variosN, amortGrilla, costoTotal,
     margen, margenTn: tn ? margen / tn : 0,
   };
 }
@@ -250,6 +251,7 @@ export default function App() {
   const [fFromProg, setFFromProg] = useState(null);
   const [fPatente, setFPatente] = useState("");
   const [fPrecio, setFPrecio] = useState(DEFAULTS.precioBruta);
+  const [fTraenEquipo, setFTraenEquipo] = useState(false);
 
   // form de programar carga
   const [pFecha, setPFecha] = useState(tomorrowISO());
@@ -260,6 +262,7 @@ export default function App() {
   const [pNota, setPNota] = useState("");
   const [pPatente, setPPatente] = useState("");
   const [pPrecio, setPPrecio] = useState(DEFAULTS.precioBruta);
+  const [pTraenEquipo, setPTraenEquipo] = useState(false);
 
   // edición inline de precio
   const [editingRegId, setEditingRegId] = useState(null);
@@ -270,6 +273,7 @@ export default function App() {
   const [editCliLocalidad, setEditCliLocalidad] = useState("");
   const [editCliTel, setEditCliTel] = useState("");
   const [editCliCanal, setEditCliCanal] = useState("Socios");
+  const [editCliTraenEquipo, setEditCliTraenEquipo] = useState(false);
   // cliente seleccionado para exportar
   const [clienteSel, setClienteSel] = useState("");
 
@@ -278,6 +282,7 @@ export default function App() {
   const [cLocalidad, setCLocalidad] = useState("");
   const [cTel, setCTel] = useState("");
   const [cCanal, setCCanal] = useState("Socios");
+  const [cTraenEquipo, setCTraenEquipo] = useState(false);
 
   useEffect(() => save("arenera_prog_v1", programadas), [programadas]);
 
@@ -366,7 +371,7 @@ export default function App() {
     let tnMes = 0, ingMes = 0, comMes = 0, costoMes = 0, margenMes = 0, tnDir = 0, batMes = 0;
     for (const r of registros) {
       const d = new Date(r.fecha + "T00:00:00");
-      const calc = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios);
+      const calc = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
       if (d.getMonth() === m && d.getFullYear() === y) {
         tnMes += calc.tn; ingMes += calc.ingresoBruto; comMes += calc.comision;
         costoMes += calc.costoTotal; margenMes += calc.margen; batMes += r.bateas;
@@ -409,7 +414,7 @@ export default function App() {
       let tn = 0, margen = 0, cargas = 0, ultima = null;
       for (const r of registros) {
         if (r.clienteId !== cl.id) continue;
-        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios);
+        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
         tn += c.tn; margen += c.margen; cargas += 1;
         if (!ultima || r.fecha > ultima) ultima = r.fecha;
       }
@@ -422,7 +427,7 @@ export default function App() {
     const map = {};
     for (const r of registros) {
       const key = r.fecha.slice(0, 7);
-      const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios);
+      const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
       if (!map[key]) map[key] = { key, tn: 0, bruto: 0, comision: 0, costo: 0, margen: 0, bateas: 0, cargas: 0 };
       const o = map[key];
       o.tn += c.tn; o.bruto += c.ingresoBruto; o.comision += c.comision;
@@ -457,7 +462,7 @@ export default function App() {
       const d = new Date(r.fecha + "T00:00:00");
       if (d.getFullYear() === cal.y && d.getMonth() === cal.m) {
         const day = d.getDate();
-        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios);
+        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
         if (!days[day]) days[day] = { tn: 0, bateas: 0, cargas: 0 };
         days[day].tn += c.tn; days[day].bateas += r.bateas; days[day].cargas += 1;
       }
@@ -490,7 +495,7 @@ export default function App() {
   const setBateasProg = (v) => { setPBateas(v); setPTn(String((parseFloat(v) || 0) * cfg.tnPorBatea)); };
 
   function resetFormCarga() {
-    setFBateas(1); setFTn(cfg.tnPorBatea); setFFromProg(null); setFPatente(""); setFPrecio("");
+    setFBateas(1); setFTn(cfg.tnPorBatea); setFFromProg(null); setFPatente(""); setFPrecio(""); setFTraenEquipo(false);
   }
 
   function registrar() {
@@ -502,7 +507,7 @@ export default function App() {
     setRegistros((rs) => [
       { id: Date.now(), fecha: fFecha, modo: fModo, bateas: b, tn, precioTn: precio,
         clienteId: fClienteId, cliente: cl ? cl.nombre : "—", canal: fCanal,
-        patente: fPatente.trim() },
+        patente: fPatente.trim(), traenEquipo: fTraenEquipo },
       ...rs,
     ]);
     if (fFromProg) setProgramadas((ps) => ps.filter((x) => x.id !== fFromProg));
@@ -526,9 +531,9 @@ export default function App() {
       ...ps,
       { id: Date.now(), fecha: pFecha, clienteId: pClienteId, cliente: cl ? cl.nombre : "—",
         canal: cl ? cl.canal : "Socios", bateas: b, tn, precioTn: precio, modo: pModo,
-        nota: pNota.trim(), patente: pPatente.trim() },
+        nota: pNota.trim(), patente: pPatente.trim(), traenEquipo: pTraenEquipo },
     ]);
-    setPBateas(1); setPTn(cfg.tnPorBatea); setPNota(""); setPClienteId(""); setPPatente(""); setPPrecio("");
+    setPBateas(1); setPTn(cfg.tnPorBatea); setPNota(""); setPClienteId(""); setPPatente(""); setPPrecio(""); setPTraenEquipo(false);
   }
   function descartarProgramada(id) { setProgramadas((ps) => ps.filter((p) => p.id !== id)); }
 
@@ -539,6 +544,7 @@ export default function App() {
     setFTn(p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea);
     setFPatente(p.patente || "");
     setFPrecio(p.precioTn != null ? String(p.precioTn) : "");
+    setFTraenEquipo(p.traenEquipo || false);
     setFFromProg(p.id);
     const el = document.getElementById("formCarga");
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -564,19 +570,19 @@ export default function App() {
     if (!cNombre.trim()) return;
     setClientes((cs) => [
       ...cs,
-      { id: Date.now(), nombre: cNombre.trim(), localidad: cLocalidad.trim(), tel: cTel.trim(), canal: cCanal },
+      { id: Date.now(), nombre: cNombre.trim(), localidad: cLocalidad.trim(), tel: cTel.trim(), canal: cCanal, traenEquipo: cTraenEquipo },
     ]);
-    setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios");
+    setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios"); setCTraenEquipo(false);
   }
   function borrarCliente(id) { setClientes((cs) => cs.filter((c) => c.id !== id)); }
   function abrirEditCliente(cl) {
     setEditingCliId(cl.id); setEditCliNombre(cl.nombre); setEditCliLocalidad(cl.localidad || "");
-    setEditCliTel(cl.tel || ""); setEditCliCanal(cl.canal || "Socios");
+    setEditCliTel(cl.tel || ""); setEditCliCanal(cl.canal || "Socios"); setEditCliTraenEquipo(cl.traenEquipo || false);
   }
   function guardarEditCliente() {
     if (!editCliNombre.trim()) return;
     setClientes((cs) => cs.map((c) => c.id === editingCliId
-      ? { ...c, nombre: editCliNombre.trim(), localidad: editCliLocalidad.trim(), tel: editCliTel.trim(), canal: editCliCanal }
+      ? { ...c, nombre: editCliNombre.trim(), localidad: editCliLocalidad.trim(), tel: editCliTel.trim(), canal: editCliCanal, traenEquipo: editCliTraenEquipo }
       : c));
     setEditingCliId(null);
   }
@@ -590,7 +596,7 @@ export default function App() {
   function elegirCliente(id) {
     setFClienteId(id);
     const cl = clientes.find((c) => String(c.id) === String(id));
-    if (cl) setFCanal(cl.canal);
+    if (cl) { setFCanal(cl.canal); setFTraenEquipo(cl.traenEquipo || false); }
   }
 
   function descargar(nombre, contenido, tipo) {
@@ -1113,6 +1119,10 @@ export default function App() {
                 </select>
               </div>
             </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", paddingTop: 22 }}>
+              <input type="checkbox" checked={cTraenEquipo} onChange={(e) => setCTraenEquipo(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.accent, flexShrink: 0 }} />
+              <span style={{ fontSize: 13, color: cTraenEquipo ? C.accent : C.ink2, fontWeight: cTraenEquipo ? 700 : 400, lineHeight: 1.3 }}>Traen su equipo<br/><span style={{ fontWeight: 400, fontSize: 12 }}>(sin costo de pala ni personal)</span></span>
+            </label>
             <button className="btn" onClick={agregarCliente}>+ Agregar</button>
           </div>
 
@@ -1141,6 +1151,10 @@ export default function App() {
                     </select>
                   </div>
                 </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", paddingTop: 22 }}>
+                  <input type="checkbox" checked={editCliTraenEquipo} onChange={(e) => setEditCliTraenEquipo(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.accent, flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, color: editCliTraenEquipo ? C.accent : C.ink2, fontWeight: editCliTraenEquipo ? 700 : 400, lineHeight: 1.3 }}>Traen su equipo<br/><span style={{ fontWeight: 400, fontSize: 12 }}>(sin costo de pala ni personal)</span></span>
+                </label>
               </div>
               <div className="row" style={{ gap: 10 }}>
                 <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={guardarEditCliente}>Guardar</button>
@@ -1160,7 +1174,10 @@ export default function App() {
                     <tr key={c.id}>
                       <td data-label="Cliente" style={{ fontWeight: 600 }}>{c.nombre}</td>
                       <td data-label="Localidad" style={{ color: C.ink2 }}>{c.localidad || "—"}</td>
-                      <td data-label="Canal"><span className="pill" style={{ background: c.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: c.canal === "Directo" ? C.verde : C.amarillo }}>{c.canal === "Directo" ? "Directo" : "Socios"}</span></td>
+                      <td data-label="Canal">
+                        <span className="pill" style={{ background: c.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: c.canal === "Directo" ? C.verde : C.amarillo }}>{c.canal === "Directo" ? "Directo" : "Socios"}</span>
+                        {c.traenEquipo && <span className="pill" style={{ background: `${C.accent}1a`, color: C.accent, marginLeft: 4 }}>Su equipo</span>}
+                      </td>
                       <td data-label="Tel" className="num" style={{ fontSize: 12.5 }}>{c.tel || "—"}</td>
                       <td data-label="Tn total" className="num" style={{ textAlign: "right" }}>{N(c.tn)}</td>
                       <td data-label="Margen" className="num" style={{ textAlign: "right", color: c.margen > 0 ? C.verde : C.ink2 }}>{$(c.margen)}</td>
@@ -1191,7 +1208,7 @@ export default function App() {
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cliente</span>
               <div className="inputWrap selectWrap">
-                <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={pClienteId} onChange={(e) => setPClienteId(e.target.value)}>
+                <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={pClienteId} onChange={(e) => { const id = e.target.value; setPClienteId(id); const cl = clientes.find((c) => String(c.id) === id); if (cl) { setPTraenEquipo(cl.traenEquipo || false); } }}>
                   <option value="">{clientes.length ? "Elegí…" : "Agregá un cliente ↓"}</option>
                   {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre}{c.localidad ? ` · ${c.localidad}` : ""}</option>)}
                 </select>
@@ -1219,6 +1236,10 @@ export default function App() {
               <div className="inputWrap">
                 <input className="input" style={{ fontFamily: "Archivo, sans-serif", textTransform: "uppercase" }} value={pPatente} placeholder="ABC 123" onChange={(e) => setPPatente(e.target.value.toUpperCase())} />
               </div>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", paddingTop: 22 }}>
+              <input type="checkbox" checked={pTraenEquipo} onChange={(e) => setPTraenEquipo(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.accent, flexShrink: 0 }} />
+              <span style={{ fontSize: 13, color: pTraenEquipo ? C.accent : C.ink2, fontWeight: pTraenEquipo ? 700 : 400, lineHeight: 1.3 }}>Traen su equipo<br/><span style={{ fontWeight: 400, fontSize: 12 }}>(sin costo operativo)</span></span>
             </label>
           </div>
           <button className="btn" style={{ marginBottom: 18 }} onClick={programar}>+ Programar carga</button>
@@ -1297,6 +1318,10 @@ export default function App() {
                 <input className="input" style={{ fontFamily: "Archivo, sans-serif", textTransform: "uppercase" }} value={fPatente} placeholder="ABC 123" onChange={(e) => setFPatente(e.target.value.toUpperCase())} />
               </div>
             </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", paddingTop: 22 }}>
+              <input type="checkbox" checked={fTraenEquipo} onChange={(e) => setFTraenEquipo(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.accent, flexShrink: 0 }} />
+              <span style={{ fontSize: 13, color: fTraenEquipo ? C.accent : C.ink2, fontWeight: fTraenEquipo ? 700 : 400, lineHeight: 1.3 }}>Traen su equipo<br/><span style={{ fontWeight: 400, fontSize: 12 }}>(sin costo operativo)</span></span>
+            </label>
           </div>
           {fFromProg && (
             <div style={{ background: `${C.amarillo}12`, borderLeft: `4px solid ${C.amarillo}`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: C.ink2 }}>
@@ -1326,7 +1351,7 @@ export default function App() {
                 <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>$/tn</th><th>Cliente</th><th>Patente</th><th>Canal</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
                 <tbody>
                   {registros.map((r) => {
-                    const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios);
+                    const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
                     return (
                       <tr key={r.id}>
                         <td data-label="Fecha" className="num" style={{ fontSize: 12.5 }}>{r.fecha}</td>
