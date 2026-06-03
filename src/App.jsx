@@ -41,7 +41,7 @@ const DEFAULTS = {
   comisionSocios: 30,       // %
   regalia: 3,               // % de boca de mina
   tnPorBatea: 30,           // tn
-  objetivoSemana: 3,        // bateas/semana
+  objetivoMes: 12,          // bateas/mes
   gasoilPrecio: 1800,       // $/L
   palaConsumo: 9,           // L/h
   palaReserva: 11400,       // $/h (reparación + amortización pala)
@@ -85,13 +85,13 @@ function calcDia(cfg, modo, tn) {
 }
 
 function amortGrillaTn(cfg) {
-  const tnVida = cfg.tnPorBatea * cfg.objetivoSemana * 52 * cfg.vidaGrillaAnios;
+  const tnVida = cfg.tnPorBatea * cfg.objetivoMes * 12 * cfg.vidaGrillaAnios;
   return tnVida ? cfg.costoGrilla / tnVida : 0;
 }
 
-// neto $/tn de cada modo, a la escala del objetivo semanal
+// neto $/tn de cada modo, a la escala del objetivo mensual
 function netoTn(cfg, modo) {
-  const r = calcDia(cfg, modo, cfg.objetivoSemana * cfg.tnPorBatea);
+  const r = calcDia(cfg, modo, cfg.objetivoMes * cfg.tnPorBatea);
   return r.margenTn;
 }
 
@@ -99,7 +99,7 @@ function netoTn(cfg, modo) {
 function breakEvenGrillada(cfg) {
   const factor = 1 - cfg.comisionSocios / 100 - cfg.regalia / 100;
   if (factor <= 0) return Infinity;
-  const tn = cfg.objetivoSemana * cfg.tnPorBatea;
+  const tn = cfg.objetivoMes * cfg.tnPorBatea;
   const opG =
     (cfg.horasPalaGrillada * cfg.palaConsumo * cfg.gasoilPrecio +
       cfg.horasPalaGrillada * cfg.palaReserva +
@@ -113,7 +113,7 @@ function breakEvenGrillada(cfg) {
 function breakEvenBruta(cfg) {
   const factor = 1 - cfg.comisionSocios / 100 - cfg.regalia / 100;
   if (factor <= 0) return Infinity;
-  const tn = cfg.objetivoSemana * cfg.tnPorBatea;
+  const tn = cfg.objetivoMes * cfg.tnPorBatea;
   const opB =
     (cfg.horasPalaBruta * cfg.palaConsumo * cfg.gasoilPrecio +
       cfg.horasPalaBruta * cfg.palaReserva +
@@ -219,7 +219,7 @@ export default function App() {
   const [clientes, setClientes] = useState(() => load("arenera_cli_v1", []));
   const [programadas, setProgramadas] = useState(() => load("arenera_prog_v1", []));
   const [modo, setModo] = useState("bruta");
-  const [bateas, setBateas] = useState(DEFAULTS.objetivoSemana);
+  const [bateas, setBateas] = useState(DEFAULTS.objetivoMes);
   const [showCfg, setShowCfg] = useState(false);
   const [logoOk, setLogoOk] = useState(true);
   const [cal, setCal] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
@@ -248,6 +248,7 @@ export default function App() {
   const [fClienteId, setFClienteId] = useState("");
   const [fCanal, setFCanal] = useState("Socios");
   const [fFromProg, setFFromProg] = useState(null);
+  const [fPatente, setFPatente] = useState("");
 
   // form de programar carga
   const [pFecha, setPFecha] = useState(tomorrowISO());
@@ -256,6 +257,7 @@ export default function App() {
   const [pTn, setPTn] = useState(DEFAULTS.tnPorBatea);
   const [pModo, setPModo] = useState("bruta");
   const [pNota, setPNota] = useState("");
+  const [pPatente, setPPatente] = useState("");
 
   // form de cliente
   const [cNombre, setCNombre] = useState("");
@@ -342,22 +344,20 @@ export default function App() {
   else if (dif >= -100) dec = { color: C.amarillo, txt: "EMPATE → VENDÉ BRUTA", msg: "Casi lo mismo: menos laburo y desgaste yendo en bruta." };
   else dec = { color: C.rojo, txt: "VENDÉ BRUTA", msg: `Grillar te resta ${$(-dif)}/tn. No conviene a este precio.` };
 
-  // métricas del mes / semana
+  // métricas del mes
   const stats = useMemo(() => {
     const now = new Date(); const m = now.getMonth(), y = now.getFullYear();
-    const sow = startOfWeek(now);
-    let tnMes = 0, ingMes = 0, comMes = 0, costoMes = 0, margenMes = 0, tnDir = 0, batSem = 0;
+    let tnMes = 0, ingMes = 0, comMes = 0, costoMes = 0, margenMes = 0, tnDir = 0, batMes = 0;
     for (const r of registros) {
       const d = new Date(r.fecha + "T00:00:00");
       const calc = calcDia(cfg, r.modo, regTn(r));
       if (d.getMonth() === m && d.getFullYear() === y) {
         tnMes += calc.tn; ingMes += calc.ingresoBruto; comMes += calc.comision;
-        costoMes += calc.costoTotal; margenMes += calc.margen;
+        costoMes += calc.costoTotal; margenMes += calc.margen; batMes += r.bateas;
         if (r.canal === "Directo") tnDir += calc.tn;
       }
-      if (d >= sow) batSem += r.bateas;
     }
-    return { tnMes, ingMes, comMes, costoMes, margenMes, tnDir, batSem,
+    return { tnMes, ingMes, comMes, costoMes, margenMes, tnDir, batMes,
       pctDir: tnMes ? (tnDir / tnMes) * 100 : 0, costoTn: tnMes ? costoMes / tnMes : 0 };
   }, [registros, cfg]);
 
@@ -380,11 +380,11 @@ export default function App() {
     alertas.push({ color: C.amarillo, t: "Falta confirmar precio de grillada", d: `Llamá al corralón. Grillar conviene solo desde ~${$(beG)}/tn.` });
   if (stats.tnMes > 0 && stats.pctDir < 20)
     alertas.push({ color: C.amarillo, t: "Dependés de los socios", d: `Solo ${N(stats.pctDir)}% de las ventas del mes son directas. Cada tn directa recupera ${$(cfg.precioBruta * cfg.comisionSocios / 100)}/tn.` });
-  if (stats.batSem >= cfg.objetivoSemana)
-    alertas.push({ color: C.verde, t: "Objetivo semanal cumplido", d: `${stats.batSem} bateas esta semana. Cada batea extra el mismo día deja casi puro margen.` });
+  if (stats.batMes >= cfg.objetivoMes)
+    alertas.push({ color: C.verde, t: "Objetivo mensual cumplido", d: `${stats.batMes} bateas este mes. Cada batea extra el mismo día deja casi puro margen.` });
 
   const semDir = stats.pctDir > 50 ? C.verde : stats.pctDir >= 20 ? C.amarillo : C.rojo;
-  const semBat = stats.batSem >= cfg.objetivoSemana ? C.verde : stats.batSem >= 1 ? C.amarillo : C.rojo;
+  const semBat = stats.batMes >= cfg.objetivoMes ? C.verde : stats.batMes >= Math.round(cfg.objetivoMes * 0.5) ? C.amarillo : C.rojo;
   const semMar = stats.margenMes > 0 ? C.verde : stats.margenMes < 0 ? C.rojo : C.amarillo;
 
   // historial por cliente (ordenado por margen, mejores arriba)
@@ -449,15 +449,15 @@ export default function App() {
   }
 
   // proyección
-  const proySem = calcDia(cfg, modo, cfg.objetivoSemana * cfg.tnPorBatea).margen;
-  const proyMes = proySem * 4.33, proyAnio = proySem * 52;
+  const proyMes = calcDia(cfg, modo, cfg.objetivoMes * cfg.tnPorBatea).margen;
+  const proyAnio = proyMes * 12;
 
   // al cambiar bateas, autocompleta toneladas con la batea estándar (editable aparte)
   const setBateasReg = (v) => { setFBateas(v); setFTn(String((parseFloat(v) || 0) * cfg.tnPorBatea)); };
   const setBateasProg = (v) => { setPBateas(v); setPTn(String((parseFloat(v) || 0) * cfg.tnPorBatea)); };
 
   function resetFormCarga() {
-    setFBateas(1); setFTn(cfg.tnPorBatea); setFFromProg(null);
+    setFBateas(1); setFTn(cfg.tnPorBatea); setFFromProg(null); setFPatente("");
   }
 
   function registrar() {
@@ -467,7 +467,8 @@ export default function App() {
     const cl = clientes.find((c) => String(c.id) === String(fClienteId));
     setRegistros((rs) => [
       { id: Date.now(), fecha: fFecha, modo: fModo, bateas: b, tn,
-        clienteId: fClienteId, cliente: cl ? cl.nombre : "—", canal: fCanal },
+        clienteId: fClienteId, cliente: cl ? cl.nombre : "—", canal: fCanal,
+        patente: fPatente.trim() },
       ...rs,
     ]);
     if (fFromProg) setProgramadas((ps) => ps.filter((x) => x.id !== fFromProg));
@@ -483,9 +484,10 @@ export default function App() {
     setProgramadas((ps) => [
       ...ps,
       { id: Date.now(), fecha: pFecha, clienteId: pClienteId, cliente: cl ? cl.nombre : "—",
-        canal: cl ? cl.canal : "Socios", bateas: b, tn, modo: pModo, nota: pNota.trim() },
+        canal: cl ? cl.canal : "Socios", bateas: b, tn, modo: pModo,
+        nota: pNota.trim(), patente: pPatente.trim() },
     ]);
-    setPBateas(1); setPTn(cfg.tnPorBatea); setPNota(""); setPClienteId("");
+    setPBateas(1); setPTn(cfg.tnPorBatea); setPNota(""); setPClienteId(""); setPPatente("");
   }
   function descartarProgramada(id) { setProgramadas((ps) => ps.filter((p) => p.id !== id)); }
 
@@ -494,6 +496,7 @@ export default function App() {
     setFFecha(p.fecha); setFClienteId(p.clienteId); setFCanal(p.canal || "Socios");
     setFModo(p.modo); setFBateas(p.bateas);
     setFTn(p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea);
+    setFPatente(p.patente || "");
     setFFromProg(p.id);
     const el = document.getElementById("formCarga");
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -502,8 +505,8 @@ export default function App() {
     const tn = p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
     let m = `*Carga El Retiro* — ${fechaCorta(p.fecha)}\n`;
     m += `Cliente: ${p.cliente}\n`;
-    m += `${p.bateas} batea(s) · arena ${p.modo}\n`;
-    m += `Total: ${N(tn)} tn`;
+    m += `${p.bateas} batea(s) · arena ${p.modo} · ${N(tn)} tn`;
+    if (p.patente) m += `\nCamión: ${p.patente}`;
     if (p.nota) m += `\nNota: ${p.nota}`;
     return m;
   }
@@ -552,7 +555,7 @@ export default function App() {
     } catch {}
   }
 
-  function dibujarResumen(key) {
+  async function dibujarResumen(key) {
     const m = resumenMeses.find((x) => x.key === key);
     if (!m) return null;
     const W = 900, H = 700, s = 2;
@@ -563,17 +566,37 @@ export default function App() {
     ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = "#540c18"; ctx.fillRect(0, 0, W, 12);
     ctx.textBaseline = "alphabetic";
-    ctx.fillStyle = "#540c18";
-    ctx.font = "800 42px Archivo, Arial, sans-serif";
-    ctx.fillText("EL RETIRO", 48, 88);
+
+    // intentar cargar el logo
+    let logoY = 108;
+    try {
+      const img = await new Promise((res, rej) => {
+        const i = new Image(); i.crossOrigin = "anonymous";
+        i.onload = () => res(i); i.onerror = rej;
+        i.src = "/logo.png";
+      });
+      const lh = 90, lw = Math.round(lh * img.naturalWidth / img.naturalHeight);
+      ctx.drawImage(img, (W - lw) / 2, 20, lw, lh);
+      logoY = 128;
+    } catch {
+      ctx.fillStyle = "#540c18";
+      ctx.font = "800 42px Archivo, Arial, sans-serif";
+      ctx.fillText("EL RETIRO", 48, 88);
+      logoY = 116;
+    }
     ctx.fillStyle = "#7a736b";
-    ctx.font = "600 17px 'IBM Plex Mono', monospace";
-    ctx.fillText("RESUMEN MENSUAL · SOL DE JULIO", 48, 116);
+    ctx.font = "600 15px 'IBM Plex Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("RESUMEN MENSUAL · SOL DE JULIO", W / 2, logoY);
+    ctx.textAlign = "left";
     ctx.fillStyle = "#1a1714";
     ctx.font = "800 36px Archivo, Arial, sans-serif";
-    ctx.fillText(mesLabel(key), 48, 176);
+    ctx.textAlign = "center";
+    ctx.fillText(mesLabel(key), W / 2, logoY + 46);
+    ctx.textAlign = "left";
     ctx.strokeStyle = "#e6e2da"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(48, 202); ctx.lineTo(W - 48, 202); ctx.stroke();
+    const divY = logoY + 64;
+    ctx.beginPath(); ctx.moveTo(48, divY); ctx.lineTo(W - 48, divY); ctx.stroke();
 
     const rowOut = (y, label, value, opts = {}) => {
       ctx.textAlign = "left";
@@ -587,7 +610,7 @@ export default function App() {
       ctx.textAlign = "left";
     };
 
-    let y = 256;
+    let y = divY + 52;
     rowOut(y, "Bateas cargadas", N(m.bateas)); y += 50;
     rowOut(y, "Toneladas", `${N(m.tn)} tn`); y += 60;
     ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, y - 24); ctx.lineTo(W - 48, y - 24); ctx.stroke();
@@ -610,7 +633,7 @@ export default function App() {
   async function compartirImagen() {
     if (!mesActivo) return;
     await esperarFuentes();
-    const cv = dibujarResumen(mesActivo);
+    const cv = await dibujarResumen(mesActivo);
     if (!cv) return;
     cv.toBlob(async (blob) => {
       if (!blob) return;
@@ -631,7 +654,7 @@ export default function App() {
   async function pdfResumen() {
     if (!mesActivo) return;
     await esperarFuentes();
-    const cv = dibujarResumen(mesActivo);
+    const cv = await dibujarResumen(mesActivo);
     if (!cv) return;
     const data = cv.toDataURL("image/png");
     const w = window.open("", "_blank");
@@ -813,7 +836,7 @@ export default function App() {
               <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" />
               <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
               <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
-              <Field label="Objetivo semanal" value={cfgDraft.objetivoSemana} onChange={setD("objetivoSemana")} suffix="bateas" />
+              <Field label="Objetivo mensual" value={cfgDraft.objetivoMes} onChange={setD("objetivoMes")} suffix="bateas" />
               <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
               <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" />
               <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" />
@@ -853,7 +876,7 @@ export default function App() {
         <div className="grid-kpi" style={{ marginBottom: 22 }}>
           <Kpi label="Margen del mes" value={$(stats.margenMes)} sub={`${N(stats.tnMes)} tn cargadas`} color={semMar} />
           <Kpi label="Ventas directas" value={`${N(stats.pctDir)}%`} sub="cuanto más alto, más recuperás del 30%" color={semDir} />
-          <Kpi label="Bateas esta semana" value={`${stats.batSem} / ${cfg.objetivoSemana}`} sub="objetivo semanal" color={semBat} />
+          <Kpi label="Bateas este mes" value={`${stats.batMes} / ${cfg.objetivoMes}`} sub="objetivo mensual" color={semBat} />
           <Kpi label="Comisión socios (mes)" value={$(stats.comMes)} sub="tu mayor costo" color={C.accent} />
         </div>
 
@@ -891,7 +914,7 @@ export default function App() {
                 <span className="label">Bateas a cargar</span>
                 <span className="num" style={{ fontSize: 18, color: C.accent }}>{bateas} · {N(dia.tn)} tn</span>
               </div>
-              <input type="range" min={1} max={10} value={bateas} onChange={(e) => setBateas(parseInt(e.target.value))}
+              <input type="range" min={1} max={30} value={bateas} onChange={(e) => setBateas(parseInt(e.target.value))}
                 style={{ width: "100%", accentColor: C.accent }} />
             </div>
             <table style={{ width: "100%" }} className="brk">
@@ -1007,6 +1030,12 @@ export default function App() {
                 <input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={pNota} placeholder="opcional…" onChange={(e) => setPNota(e.target.value)} />
               </div>
             </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Patente</span>
+              <div className="inputWrap">
+                <input className="input" style={{ fontFamily: "Archivo, sans-serif", textTransform: "uppercase" }} value={pPatente} placeholder="ABC 123" onChange={(e) => setPPatente(e.target.value.toUpperCase())} />
+              </div>
+            </label>
           </div>
           <button className="btn" style={{ marginBottom: 18 }} onClick={programar}>+ Programar carga</button>
 
@@ -1026,7 +1055,7 @@ export default function App() {
                         <span className="pill" style={{ background: `${estado.c}1a`, color: estado.c }}>{estado.t}</span>
                       </div>
                       <div style={{ fontWeight: 600, fontSize: 14.5 }}>{p.cliente}</div>
-                      <div className="num" style={{ fontSize: 12.5, color: C.ink2, marginTop: 2 }}>{p.bateas} batea(s) · {p.modo} · {N(tn)} tn</div>
+                      <div className="num" style={{ fontSize: 12.5, color: C.ink2, marginTop: 2 }}>{p.bateas} batea(s) · {p.modo} · {N(tn)} tn{p.patente ? ` · ${p.patente}` : ""}</div>
                       {p.nota && <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 4, fontStyle: "italic" }}>“{p.nota}”</div>}
                     </div>
                     <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
@@ -1077,6 +1106,12 @@ export default function App() {
                 </select>
               </div>
             </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Patente</span>
+              <div className="inputWrap">
+                <input className="input" style={{ fontFamily: "Archivo, sans-serif", textTransform: "uppercase" }} value={fPatente} placeholder="ABC 123" onChange={(e) => setFPatente(e.target.value.toUpperCase())} />
+              </div>
+            </label>
           </div>
           {fFromProg && (
             <div style={{ background: `${C.amarillo}12`, borderLeft: `4px solid ${C.amarillo}`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: C.ink2 }}>
@@ -1090,7 +1125,7 @@ export default function App() {
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table className="reg">
-                <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>Cliente</th><th>Canal</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>Cliente</th><th>Patente</th><th>Canal</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
                 <tbody>
                   {registros.map((r) => {
                     const c = calcDia(cfg, r.modo, regTn(r));
@@ -1101,6 +1136,7 @@ export default function App() {
                         <td data-label="Bateas" className="num">{r.bateas}</td>
                         <td data-label="Tn" className="num">{N(c.tn)}</td>
                         <td data-label="Cliente">{r.cliente}</td>
+                        <td data-label="Patente" className="num" style={{ fontSize: 12.5 }}>{r.patente || "—"}</td>
                         <td data-label="Canal"><span className="pill" style={{ background: r.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: r.canal === "Directo" ? C.verde : C.amarillo }}>{r.canal}</span></td>
                         <td data-label="Margen" className="num" style={{ textAlign: "right", color: c.margen >= 0 ? C.verde : C.rojo }}>{$(c.margen)}</td>
                         <td data-label="" style={{ textAlign: "right" }}><button className="del" onClick={() => borrar(r.id)}>×</button></td>
@@ -1210,11 +1246,11 @@ export default function App() {
         </Section>
 
         {/* PROYECCIÓN */}
-        <Section tag="Proyección" title={`Si cargás ${cfg.objetivoSemana} bateas/semana (${modo})`}>
+        <Section tag="Proyección" title={`Si cargás ${cfg.objetivoMes} bateas/mes (${modo})`}>
           <div className="grid-3">
-            <Kpi label="Por semana" value={$(proySem)} sub="margen de contribución" color={C.accent} />
-            <Kpi label="Por mes" value={$(proyMes)} sub="≈ 4,33 semanas" color={C.accent} />
-            <Kpi label="Por año" value={$(proyAnio)} sub="52 semanas" color={C.accent} />
+            <Kpi label="Por mes" value={$(proyMes)} sub={`${cfg.objetivoMes} bateas · ${N(cfg.objetivoMes * cfg.tnPorBatea)} tn`} color={C.accent} />
+            <Kpi label="Por año" value={$(proyAnio)} sub="12 meses" color={C.accent} />
+            <Kpi label="Por batea" value={$(proyMes / (cfg.objetivoMes || 1))} sub="margen promedio" color={C.accent} />
           </div>
         </Section>
 
