@@ -59,8 +59,8 @@ const DEFAULTS = {
 /* ────────────────────────────────────────────────────────────
    MOTOR DE CÁLCULO
    ──────────────────────────────────────────────────────────── */
-function calcDia(cfg, modo, tn) {
-  const precio = modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta;
+function calcDia(cfg, modo, tn, precioTn = null) {
+  const precio = precioTn != null ? precioTn : (modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
   const ingresoBruto = tn * precio;
   const comision = ingresoBruto * (cfg.comisionSocios / 100);
   const regaliaMonto = ingresoBruto * (cfg.regalia / 100);
@@ -249,6 +249,7 @@ export default function App() {
   const [fCanal, setFCanal] = useState("Socios");
   const [fFromProg, setFFromProg] = useState(null);
   const [fPatente, setFPatente] = useState("");
+  const [fPrecio, setFPrecio] = useState(DEFAULTS.precioBruta);
 
   // form de programar carga
   const [pFecha, setPFecha] = useState(tomorrowISO());
@@ -258,6 +259,7 @@ export default function App() {
   const [pModo, setPModo] = useState("bruta");
   const [pNota, setPNota] = useState("");
   const [pPatente, setPPatente] = useState("");
+  const [pPrecio, setPPrecio] = useState(DEFAULTS.precioBruta);
 
   // form de cliente
   const [cNombre, setCNombre] = useState("");
@@ -330,6 +332,8 @@ export default function App() {
 
   // toneladas de una carga: usa las guardadas, o estima por batea estándar (compatibilidad)
   const regTn = (r) => (r.tn != null ? r.tn : (parseFloat(r.bateas) || 0) * cfg.tnPorBatea);
+  // precio cerrado de una carga: usa el guardado, o cae al supuesto actual (cargas viejas)
+  const regPrecio = (r) => r.precioTn != null ? r.precioTn : (r.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
 
   const dia = useMemo(() => calcDia(cfg, modo, bateas * cfg.tnPorBatea), [cfg, modo, bateas]);
   const beG = useMemo(() => breakEvenGrillada(cfg), [cfg]);
@@ -350,7 +354,7 @@ export default function App() {
     let tnMes = 0, ingMes = 0, comMes = 0, costoMes = 0, margenMes = 0, tnDir = 0, batMes = 0;
     for (const r of registros) {
       const d = new Date(r.fecha + "T00:00:00");
-      const calc = calcDia(cfg, r.modo, regTn(r));
+      const calc = calcDia(cfg, r.modo, regTn(r), regPrecio(r));
       if (d.getMonth() === m && d.getFullYear() === y) {
         tnMes += calc.tn; ingMes += calc.ingresoBruto; comMes += calc.comision;
         costoMes += calc.costoTotal; margenMes += calc.margen; batMes += r.bateas;
@@ -393,7 +397,7 @@ export default function App() {
       let tn = 0, margen = 0, cargas = 0, ultima = null;
       for (const r of registros) {
         if (r.clienteId !== cl.id) continue;
-        const c = calcDia(cfg, r.modo, regTn(r));
+        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r));
         tn += c.tn; margen += c.margen; cargas += 1;
         if (!ultima || r.fecha > ultima) ultima = r.fecha;
       }
@@ -406,7 +410,7 @@ export default function App() {
     const map = {};
     for (const r of registros) {
       const key = r.fecha.slice(0, 7);
-      const c = calcDia(cfg, r.modo, regTn(r));
+      const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r));
       if (!map[key]) map[key] = { key, tn: 0, bruto: 0, comision: 0, costo: 0, margen: 0, bateas: 0, cargas: 0 };
       const o = map[key];
       o.tn += c.tn; o.bruto += c.ingresoBruto; o.comision += c.comision;
@@ -424,7 +428,7 @@ export default function App() {
       const d = new Date(r.fecha + "T00:00:00");
       if (d.getFullYear() === cal.y && d.getMonth() === cal.m) {
         const day = d.getDate();
-        const c = calcDia(cfg, r.modo, regTn(r));
+        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r));
         if (!days[day]) days[day] = { tn: 0, bateas: 0, cargas: 0 };
         days[day].tn += c.tn; days[day].bateas += r.bateas; days[day].cargas += 1;
       }
@@ -457,16 +461,17 @@ export default function App() {
   const setBateasProg = (v) => { setPBateas(v); setPTn(String((parseFloat(v) || 0) * cfg.tnPorBatea)); };
 
   function resetFormCarga() {
-    setFBateas(1); setFTn(cfg.tnPorBatea); setFFromProg(null); setFPatente("");
+    setFBateas(1); setFTn(cfg.tnPorBatea); setFFromProg(null); setFPatente(""); setFPrecio(cfg.precioBruta);
   }
 
   function registrar() {
     const b = parseFloat(fBateas) || 0;
     const tn = parseFloat(fTn) || 0;
+    const precio = parseFloat(fPrecio) || (fModo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
     if (tn <= 0 || !fClienteId) return;
     const cl = clientes.find((c) => String(c.id) === String(fClienteId));
     setRegistros((rs) => [
-      { id: Date.now(), fecha: fFecha, modo: fModo, bateas: b, tn,
+      { id: Date.now(), fecha: fFecha, modo: fModo, bateas: b, tn, precioTn: precio,
         clienteId: fClienteId, cliente: cl ? cl.nombre : "—", canal: fCanal,
         patente: fPatente.trim() },
       ...rs,
@@ -479,15 +484,16 @@ export default function App() {
   function programar() {
     const b = parseFloat(pBateas) || 0;
     const tn = parseFloat(pTn) || 0;
+    const precio = parseFloat(pPrecio) || (pModo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
     if (tn <= 0 || !pClienteId || !pFecha) return;
     const cl = clientes.find((c) => String(c.id) === String(pClienteId));
     setProgramadas((ps) => [
       ...ps,
       { id: Date.now(), fecha: pFecha, clienteId: pClienteId, cliente: cl ? cl.nombre : "—",
-        canal: cl ? cl.canal : "Socios", bateas: b, tn, modo: pModo,
+        canal: cl ? cl.canal : "Socios", bateas: b, tn, precioTn: precio, modo: pModo,
         nota: pNota.trim(), patente: pPatente.trim() },
     ]);
-    setPBateas(1); setPTn(cfg.tnPorBatea); setPNota(""); setPClienteId(""); setPPatente("");
+    setPBateas(1); setPTn(cfg.tnPorBatea); setPNota(""); setPClienteId(""); setPPatente(""); setPPrecio(cfg.precioBruta);
   }
   function descartarProgramada(id) { setProgramadas((ps) => ps.filter((p) => p.id !== id)); }
 
@@ -497,6 +503,7 @@ export default function App() {
     setFModo(p.modo); setFBateas(p.bateas);
     setFTn(p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea);
     setFPatente(p.patente || "");
+    setFPrecio(p.precioTn != null ? p.precioTn : (p.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta));
     setFFromProg(p.id);
     const el = document.getElementById("formCarga");
     if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -505,7 +512,7 @@ export default function App() {
     const tn = p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
     let m = `*Carga El Retiro* — ${fechaCorta(p.fecha)}\n`;
     m += `Cliente: ${p.cliente}\n`;
-    m += `${p.bateas} batea(s) · arena ${p.modo} · ${N(tn)} tn`;
+    m += `${p.bateas} batea(s) · arena ${p.modo} · ${N(tn)} tn · ${$(p.precioTn != null ? p.precioTn : (p.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta))}/tn`;
     if (p.patente) m += `\nCamión: ${p.patente}`;
     if (p.nota) m += `\nNota: ${p.nota}`;
     return m;
@@ -1019,11 +1026,12 @@ export default function App() {
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Modo</span>
               <div className="inputWrap selectWrap">
-                <select className="input" value={pModo} onChange={(e) => setPModo(e.target.value)}>
+                <select className="input" value={pModo} onChange={(e) => { const m = e.target.value; setPModo(m); setPPrecio(String(m === "grillada" ? cfg.precioGrillada : cfg.precioBruta)); }}>
                   <option value="bruta">Bruta</option><option value="grillada">Grillada</option>
                 </select>
               </div>
             </label>
+            <Field label="Precio/tn" value={pPrecio} onChange={setPPrecio} suffix="$" />
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Nota</span>
               <div className="inputWrap">
@@ -1055,7 +1063,7 @@ export default function App() {
                         <span className="pill" style={{ background: `${estado.c}1a`, color: estado.c }}>{estado.t}</span>
                       </div>
                       <div style={{ fontWeight: 600, fontSize: 14.5 }}>{p.cliente}</div>
-                      <div className="num" style={{ fontSize: 12.5, color: C.ink2, marginTop: 2 }}>{p.bateas} batea(s) · {p.modo} · {N(tn)} tn{p.patente ? ` · ${p.patente}` : ""}</div>
+                      <div className="num" style={{ fontSize: 12.5, color: C.ink2, marginTop: 2 }}>{p.bateas} batea(s) · {p.modo} · {N(tn)} tn · {$(p.precioTn != null ? p.precioTn : (p.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta))}/tn{p.patente ? ` · ${p.patente}` : ""}</div>
                       {p.nota && <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 4, fontStyle: "italic" }}>“{p.nota}”</div>}
                     </div>
                     <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
@@ -1082,13 +1090,14 @@ export default function App() {
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Modo</span>
               <div className="inputWrap selectWrap">
-                <select className="input" value={fModo} onChange={(e) => setFModo(e.target.value)}>
+                <select className="input" value={fModo} onChange={(e) => { const m = e.target.value; setFModo(m); setFPrecio(String(m === "grillada" ? cfg.precioGrillada : cfg.precioBruta)); }}>
                   <option value="bruta">Bruta</option><option value="grillada">Grillada</option>
                 </select>
               </div>
             </label>
             <Field label="Bateas" value={fBateas} onChange={setBateasReg} />
             <Field label="Toneladas" value={fTn} onChange={setFTn} suffix="tn" />
+            <Field label="Precio/tn" value={fPrecio} onChange={setFPrecio} suffix="$" />
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cliente</span>
               <div className="inputWrap selectWrap">
@@ -1125,16 +1134,17 @@ export default function App() {
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table className="reg">
-                <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>Cliente</th><th>Patente</th><th>Canal</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>$/tn</th><th>Cliente</th><th>Patente</th><th>Canal</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
                 <tbody>
                   {registros.map((r) => {
-                    const c = calcDia(cfg, r.modo, regTn(r));
+                    const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r));
                     return (
                       <tr key={r.id}>
                         <td data-label="Fecha" className="num" style={{ fontSize: 12.5 }}>{r.fecha}</td>
                         <td data-label="Modo"><span className="pill" style={{ background: r.modo === "grillada" ? `${C.accent}1a` : `${C.ink}0d`, color: r.modo === "grillada" ? C.accent : C.ink }}>{r.modo}</span></td>
                         <td data-label="Bateas" className="num">{r.bateas}</td>
                         <td data-label="Tn" className="num">{N(c.tn)}</td>
+                        <td data-label="$/tn" className="num" style={{ fontSize: 12.5 }}>{$(regPrecio(r))}</td>
                         <td data-label="Cliente">{r.cliente}</td>
                         <td data-label="Patente" className="num" style={{ fontSize: 12.5 }}>{r.patente || "—"}</td>
                         <td data-label="Canal"><span className="pill" style={{ background: r.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: r.canal === "Directo" ? C.verde : C.amarillo }}>{r.canal}</span></td>
