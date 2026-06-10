@@ -585,7 +585,7 @@ export default function App() {
             <div>
               {logoOk ? (
                 <img src="/logo.png" alt="El Retiro" onError={() => setLogoOk(false)}
-                  style={{ width: "min(230px, 62vw)", height: "auto", display: "block" }} />
+                  style={{ width: "min(230px, 62vw)", height: "auto", display: "block", mixBlendMode: "multiply" }} />
               ) : (
                 <h1 style={{ margin: 0, fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 38, letterSpacing: "-0.03em", color: C.accent }}>EL RETIRO</h1>
               )}
