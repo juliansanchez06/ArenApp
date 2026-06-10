@@ -2,35 +2,7 @@
 // Deploy: proyecto Vite React -> reemplazá src/App.jsx por este archivo -> push a GitHub -> import en Vercel.
 // Persistencia: localStorage (funciona en Vercel; en la vista previa del chat puede no guardar entre recargas).
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
-import { initializeApp } from "firebase/app";
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "firebase/auth";
-import { getFirestore, doc, onSnapshot, setDoc } from "firebase/firestore";
-
-// Config del proyecto Firebase (las claves web son públicas por diseño; la seguridad la dan las reglas + el login)
-const firebaseConfig = {
-  apiKey: "AIzaSyCWeQ9rWcZGj_29LY14Ztb7fKXU0_6b6X8",
-  authDomain: "arenapp-63a04.firebaseapp.com",
-  projectId: "arenapp-63a04",
-  storageBucket: "arenapp-63a04.firebasestorage.app",
-  messagingSenderId: "1040391625845",
-  appId: "1:1040391625845:web:4ea7857860180424ad6c3c",
-};
-const fbApp = initializeApp(firebaseConfig);
-const auth = getAuth(fbApp);
-const db = getFirestore(fbApp);
-
-const msgAuth = (code) => ({
-  "auth/invalid-email": "El email no es válido.",
-  "auth/missing-password": "Falta la contraseña.",
-  "auth/weak-password": "La contraseña debe tener al menos 6 caracteres.",
-  "auth/email-already-in-use": "Ese email ya tiene una cuenta. Iniciá sesión.",
-  "auth/invalid-credential": "Email o contraseña incorrectos.",
-  "auth/user-not-found": "No existe una cuenta con ese email.",
-  "auth/wrong-password": "Contraseña incorrecta.",
-  "auth/too-many-requests": "Demasiados intentos. Esperá un momento.",
-  "auth/network-request-failed": "Sin conexión. Revisá internet.",
-}[code] || "No se pudo entrar. Revisá los datos e intentá de nuevo.");
+import React, { useState, useEffect, useMemo } from "react";
 
 /* ────────────────────────────────────────────────────────────
    SUPUESTOS POR DEFECTO (editables desde la app)
@@ -41,8 +13,7 @@ const DEFAULTS = {
   comisionSocios: 30,       // %
   regalia: 3,               // % de boca de mina
   tnPorBatea: 30,           // tn
-  objetivoBruta: 10,        // bateas bruta/mes
-  objetivoGrillada: 2,      // bateas grillada/mes
+  objetivoSemana: 3,        // bateas/semana
   gasoilPrecio: 1800,       // $/L
   palaConsumo: 9,           // L/h
   palaReserva: 11400,       // $/h (reparación + amortización pala)
@@ -60,10 +31,11 @@ const DEFAULTS = {
 /* ────────────────────────────────────────────────────────────
    MOTOR DE CÁLCULO
    ──────────────────────────────────────────────────────────── */
-function calcDia(cfg, modo, tn, precioTn = null, comisionPct = null, sinCosto = false) {
-  const precio = precioTn != null ? precioTn : (modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
+function calcDia(cfg, modo, bateas) {
+  const tn = bateas * cfg.tnPorBatea;
+  const precio = modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta;
   const ingresoBruto = tn * precio;
-  const comision = ingresoBruto * ((comisionPct != null ? comisionPct : cfg.comisionSocios) / 100);
+  const comision = ingresoBruto * (cfg.comisionSocios / 100);
   const regaliaMonto = ingresoBruto * (cfg.regalia / 100);
   const ingresoNeto = ingresoBruto - comision;
 
@@ -71,31 +43,28 @@ function calcDia(cfg, modo, tn, precioTn = null, comisionPct = null, sinCosto = 
   const jornales = modo === "grillada" ? cfg.jornalesGrillada : cfg.jornalesBruta;
   const varios = modo === "grillada" ? cfg.variosGrillada : cfg.variosBruta;
 
-  const gasoil = sinCosto ? 0 : horas * cfg.palaConsumo * cfg.gasoilPrecio;
-  const reserva = sinCosto ? 0 : horas * cfg.palaReserva;
-  const manoObra = sinCosto ? 0 : jornales * cfg.jornal;
-  const variosN = sinCosto ? 0 : varios;
-  const amortGrilla = (!sinCosto && modo === "grillada") ? amortGrillaTn(cfg) * tn : 0;
+  const gasoil = horas * cfg.palaConsumo * cfg.gasoilPrecio;
+  const reserva = horas * cfg.palaReserva;
+  const manoObra = jornales * cfg.jornal;
+  const amortGrilla = modo === "grillada" ? amortGrillaTn(cfg) * tn : 0;
 
-  const costoTotal = gasoil + reserva + manoObra + variosN + regaliaMonto + amortGrilla;
+  const costoTotal = gasoil + reserva + manoObra + varios + regaliaMonto + amortGrilla;
   const margen = ingresoNeto - costoTotal;
   return {
     tn, precio, ingresoBruto, comision, regaliaMonto, ingresoNeto,
-    gasoil, reserva, manoObra, varios: variosN, amortGrilla, costoTotal,
-    margen, margenTn: tn ? margen / tn : 0,
+    gasoil, reserva, manoObra, varios, amortGrilla, costoTotal,
+    margen, margenTn: tn ? margen / tn : 0, margenBatea: bateas ? margen / bateas : 0,
   };
 }
 
 function amortGrillaTn(cfg) {
-  const totalBatMes = (cfg.objetivoBruta || 0) + (cfg.objetivoGrillada || 0);
-  const tnVida = cfg.tnPorBatea * totalBatMes * 12 * cfg.vidaGrillaAnios;
+  const tnVida = cfg.tnPorBatea * cfg.objetivoSemana * 52 * cfg.vidaGrillaAnios;
   return tnVida ? cfg.costoGrilla / tnVida : 0;
 }
 
-// neto $/tn de cada modo usando el objetivo de ese modo
+// neto $/tn de cada modo, a la escala del objetivo semanal
 function netoTn(cfg, modo) {
-  const bat = modo === "grillada" ? (cfg.objetivoGrillada || 1) : (cfg.objetivoBruta || 1);
-  const r = calcDia(cfg, modo, bat * cfg.tnPorBatea);
+  const r = calcDia(cfg, modo, cfg.objetivoSemana);
   return r.margenTn;
 }
 
@@ -103,7 +72,7 @@ function netoTn(cfg, modo) {
 function breakEvenGrillada(cfg) {
   const factor = 1 - cfg.comisionSocios / 100 - cfg.regalia / 100;
   if (factor <= 0) return Infinity;
-  const tn = (cfg.objetivoGrillada || 1) * cfg.tnPorBatea;
+  const tn = cfg.objetivoSemana * cfg.tnPorBatea;
   const opG =
     (cfg.horasPalaGrillada * cfg.palaConsumo * cfg.gasoilPrecio +
       cfg.horasPalaGrillada * cfg.palaReserva +
@@ -117,7 +86,7 @@ function breakEvenGrillada(cfg) {
 function breakEvenBruta(cfg) {
   const factor = 1 - cfg.comisionSocios / 100 - cfg.regalia / 100;
   if (factor <= 0) return Infinity;
-  const tn = (cfg.objetivoBruta || 1) * cfg.tnPorBatea;
+  const tn = cfg.objetivoSemana * cfg.tnPorBatea;
   const opB =
     (cfg.horasPalaBruta * cfg.palaConsumo * cfg.gasoilPrecio +
       cfg.horasPalaBruta * cfg.palaReserva +
@@ -131,8 +100,17 @@ function breakEvenBruta(cfg) {
    ──────────────────────────────────────────────────────────── */
 const $ = (n) => (isFinite(n) ? "$" + Math.round(n).toLocaleString("es-AR") : "—");
 const N = (n) => (isFinite(n) ? Math.round(n).toLocaleString("es-AR") : "—");
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const tomorrowISO = () => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); };
+// id único: evita colisiones de Date.now() cuando se crean varios items en el mismo ms
+const newId = () => (typeof crypto !== "undefined" && crypto.randomUUID
+  ? crypto.randomUUID()
+  : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+// fecha ISO en hora LOCAL (no UTC): evita que una carga de la noche caiga al día siguiente
+const localISO = (d = new Date()) => {
+  const x = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return x.toISOString().slice(0, 10);
+};
+const todayISO = () => localISO();
+const tomorrowISO = () => { const d = new Date(); d.setDate(d.getDate() + 1); return localISO(d); };
 const DIAS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 const fechaCorta = (iso) => { const d = new Date(iso + "T00:00:00"); return `${DIAS[d.getDay()]} ${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`; };
 const MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
@@ -151,22 +129,6 @@ const C = {
   bg: "#ffffff", panel: "#faf8f4", line: "#e6e2da", ink: "#1a1714",
   ink2: "#7a736b", accent: "#540c18",
   verde: "#15803d", amarillo: "#ca8a04", rojo: "#dc2626",
-};
-
-// Color por sección — punto + borde superior de la card
-const TC = {
-  "Decisión":    { dot: "#2563eb", bg: "#eff6ff" },
-  "Calculadora": { dot: "#7c3aed", bg: "#f5f3ff" },
-  "Cartera":     { dot: "#059669", bg: "#ecfdf5" },
-  "Agenda":      { dot: "#d97706", bg: "#fffbeb" },
-  "Operación":   { dot: "#ea580c", bg: "#fff7ed" },
-  "Resumen":     { dot: "#4f46e5", bg: "#eef2ff" },
-  "Calendario":  { dot: "#0d9488", bg: "#f0fdfa" },
-  "Tablero":     { dot: "#db2777", bg: "#fdf2f8" },
-  "Proyección":  { dot: "#65a30d", bg: "#f7fee7" },
-  "Resultado":   { dot: "#15803d", bg: "#f0fdf4" },
-  "Parámetros":  { dot: "#475569", bg: "#f8fafc" },
-  "Estructura":  { dot: "#c2410c", bg: "#fff7ed" },
 };
 
 function load(key, fallback) {
@@ -188,13 +150,12 @@ function Dot({ color }) {
 }
 
 function Section({ tag, title, right, children }) {
-  const tc = TC[tag] || { dot: C.accent, bg: C.panel };
   return (
-    <section className="card" style={{ borderTop: `3px solid ${tc.dot}`, background: tc.bg }}>
+    <section className="card">
       <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 18 }}>
         <div className="row" style={{ gap: 10, alignItems: "center" }}>
-          <span style={{ width: 8, height: 8, background: tc.dot, display: "inline-block", borderRadius: 2 }} />
-          <span className="label" style={{ color: tc.dot }}>{tag}</span>
+          <span style={{ width: 8, height: 8, background: C.accent, display: "inline-block" }} />
+          <span className="label">{tag}</span>
         </div>
         {right}
       </div>
@@ -239,10 +200,8 @@ export default function App() {
   const [registros, setRegistros] = useState(() => load("arenera_reg_v1", []));
   const [clientes, setClientes] = useState(() => load("arenera_cli_v1", []));
   const [programadas, setProgramadas] = useState(() => load("arenera_prog_v1", []));
-  const [gastosFijos, setGastosFijos] = useState(() => load("arenera_gastos_v1", []));
   const [modo, setModo] = useState("bruta");
-  const [bateasB, setBateasB] = useState(DEFAULTS.objetivoBruta);
-  const [bateasG, setBateasG] = useState(DEFAULTS.objetivoGrillada);
+  const [bateas, setBateas] = useState(DEFAULTS.objetivoSemana);
   const [showCfg, setShowCfg] = useState(false);
   const [logoOk, setLogoOk] = useState(true);
   const [cal, setCal] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
@@ -250,115 +209,32 @@ export default function App() {
   const [pendingImport, setPendingImport] = useState(null);
   const [cfgDraft, setCfgDraft] = useState(() => ({ ...DEFAULTS, ...load("arenera_cfg_v1", {}) }));
   const [cfgSaved, setCfgSaved] = useState(false);
-  const [mesSel, setMesSel] = useState("");
-
-  // sesión
-  const [user, setUser] = useState(null);
-  const [authReady, setAuthReady] = useState(false);
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPass, setAuthPass] = useState("");
-  const [authMode, setAuthMode] = useState("signin");
-  const [authErr, setAuthErr] = useState("");
-  const [authBusy, setAuthBusy] = useState(false);
-  const hydrated = useRef(false);
-  const remoteApplying = useRef(false);
 
   // form de carga
   const [fFecha, setFFecha] = useState(todayISO());
   const [fModo, setFModo] = useState("bruta");
   const [fBateas, setFBateas] = useState(1);
-  const [fTn, setFTn] = useState(DEFAULTS.tnPorBatea);
   const [fClienteId, setFClienteId] = useState("");
   const [fCanal, setFCanal] = useState("Socios");
-  const [fFromProg, setFFromProg] = useState(null);
-  const [fPatente, setFPatente] = useState("");
-  const [fPrecio, setFPrecio] = useState(DEFAULTS.precioBruta);
-  const [fTraenEquipo, setFTraenEquipo] = useState(false);
 
   // form de programar carga
   const [pFecha, setPFecha] = useState(tomorrowISO());
   const [pClienteId, setPClienteId] = useState("");
   const [pBateas, setPBateas] = useState(1);
-  const [pTn, setPTn] = useState(DEFAULTS.tnPorBatea);
   const [pModo, setPModo] = useState("bruta");
   const [pNota, setPNota] = useState("");
-  const [pPatente, setPPatente] = useState("");
-  const [pPrecio, setPPrecio] = useState(DEFAULTS.precioBruta);
-  const [pTraenEquipo, setPTraenEquipo] = useState(false);
-
-  // edición inline de precio
-  const [editingRegId, setEditingRegId] = useState(null);
-  const [editPrecio, setEditPrecio] = useState("");
-  // edición de clientes
-  const [editingCliId, setEditingCliId] = useState(null);
-  const [editCliNombre, setEditCliNombre] = useState("");
-  const [editCliLocalidad, setEditCliLocalidad] = useState("");
-  const [editCliTel, setEditCliTel] = useState("");
-  const [editCliCanal, setEditCliCanal] = useState("Socios");
-  const [editCliTraenEquipo, setEditCliTraenEquipo] = useState(false);
-  // cliente seleccionado para exportar
-  const [clienteSel, setClienteSel] = useState("");
 
   // form de cliente
   const [cNombre, setCNombre] = useState("");
   const [cLocalidad, setCLocalidad] = useState("");
   const [cTel, setCTel] = useState("");
   const [cCanal, setCCanal] = useState("Socios");
-  const [cTraenEquipo, setCTraenEquipo] = useState(false);
 
   useEffect(() => save("arenera_prog_v1", programadas), [programadas]);
-  useEffect(() => save("arenera_gastos_v1", gastosFijos), [gastosFijos]);
 
   useEffect(() => save("arenera_cfg_v1", cfg), [cfg]);
   useEffect(() => save("arenera_reg_v1", registros), [registros]);
   useEffect(() => save("arenera_cli_v1", clientes), [clientes]);
-
-  // ── SESIÓN Y NUBE (Firebase) ──────────────────────────────
-  useEffect(() => onAuthStateChanged(auth, (u) => { setUser(u); setAuthReady(true); }), []);
-
-  // cargar y escuchar en vivo los datos del usuario
-  useEffect(() => {
-    if (!user) { hydrated.current = false; return; }
-    hydrated.current = false;
-    const ref = doc(db, "areneras", user.uid);
-    const unsub = onSnapshot(ref, (snap) => {
-      if (snap.exists()) {
-        const d = snap.data();
-        remoteApplying.current = true;
-        setCfg({ ...DEFAULTS, ...(d.cfg || {}) });
-        setRegistros(Array.isArray(d.registros) ? d.registros : []);
-        setClientes(Array.isArray(d.clientes) ? d.clientes : []);
-        setProgramadas(Array.isArray(d.programadas) ? d.programadas : []);
-        setGastosFijos(Array.isArray(d.gastosFijos) ? d.gastosFijos : []);
-        hydrated.current = true;
-        setTimeout(() => { remoteApplying.current = false; }, 0);
-      } else {
-        setDoc(ref, { cfg, registros, clientes, programadas, gastosFijos, updated: Date.now() }).catch(() => {});
-        hydrated.current = true;
-      }
-    }, () => {});
-    return () => unsub();
-  }, [user]);
-
-  // guardar cambios en la nube (con un respiro para no escribir en cada tecla)
-  useEffect(() => {
-    if (!user || !hydrated.current || remoteApplying.current) return;
-    const ref = doc(db, "areneras", user.uid);
-    const t = setTimeout(() => {
-      setDoc(ref, { cfg, registros, clientes, programadas, gastosFijos, updated: Date.now() }, { merge: true }).catch(() => {});
-    }, 700);
-    return () => clearTimeout(t);
-  }, [cfg, registros, clientes, programadas, gastosFijos, user]);
-
-  async function entrar() {
-    setAuthErr(""); setAuthBusy(true);
-    try {
-      if (authMode === "signup") await createUserWithEmailAndPassword(auth, authEmail.trim(), authPass);
-      else await signInWithEmailAndPassword(auth, authEmail.trim(), authPass);
-      setAuthPass("");
-    } catch (e) { setAuthErr(msgAuth(e && e.code)); }
-    setAuthBusy(false);
-  }
 
   const setD = (k) => (v) => { setCfgDraft((d) => ({ ...d, [k]: v })); setCfgSaved(false); };
   const normCfg = (obj) => { const o = {}; for (const k in obj) { const v = obj[k]; o[k] = typeof v === "number" ? v : (parseFloat(v) || 0); } return o; };
@@ -371,11 +247,10 @@ export default function App() {
     setTimeout(() => setCfgSaved(false), 2500);
   }
 
-  // toneladas de una carga: usa las guardadas, o estima por batea estándar (compatibilidad)
-  const regTn = (r) => (r.tn != null ? r.tn : (parseFloat(r.bateas) || 0) * cfg.tnPorBatea);
-  // precio cerrado de una carga: usa el guardado, o cae al supuesto actual (cargas viejas)
-  const regPrecio = (r) => r.precioTn != null ? r.precioTn : (r.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
-
+  const dia = useMemo(() => calcDia(cfg, modo, bateas), [cfg, modo, bateas]);
+  // Economía de un registro: usa el snapshot inmutable guardado al cargar (r.econ).
+  // Para registros viejos sin snapshot, cae a recalcular con cfg actual (compatibilidad).
+  const econDe = (r) => (r && r.econ ? r.econ : calcDia(cfg, r.modo, r.bateas));
   const beG = useMemo(() => breakEvenGrillada(cfg), [cfg]);
   const beB = useMemo(() => breakEvenBruta(cfg), [cfg]);
   const netoB = useMemo(() => netoTn(cfg, "bruta"), [cfg]);
@@ -388,20 +263,22 @@ export default function App() {
   else if (dif >= -100) dec = { color: C.amarillo, txt: "EMPATE → VENDÉ BRUTA", msg: "Casi lo mismo: menos laburo y desgaste yendo en bruta." };
   else dec = { color: C.rojo, txt: "VENDÉ BRUTA", msg: `Grillar te resta ${$(-dif)}/tn. No conviene a este precio.` };
 
-  // métricas del mes
+  // métricas del mes / semana
   const stats = useMemo(() => {
     const now = new Date(); const m = now.getMonth(), y = now.getFullYear();
-    let tnMes = 0, ingMes = 0, comMes = 0, costoMes = 0, margenMes = 0, tnDir = 0, batMes = 0;
+    const sow = startOfWeek(now);
+    let tnMes = 0, ingMes = 0, comMes = 0, costoMes = 0, margenMes = 0, tnDir = 0, batSem = 0;
     for (const r of registros) {
       const d = new Date(r.fecha + "T00:00:00");
-      const calc = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
+      const calc = econDe(r);
       if (d.getMonth() === m && d.getFullYear() === y) {
         tnMes += calc.tn; ingMes += calc.ingresoBruto; comMes += calc.comision;
-        costoMes += calc.costoTotal; margenMes += calc.margen; batMes += r.bateas;
+        costoMes += calc.costoTotal; margenMes += calc.margen;
         if (r.canal === "Directo") tnDir += calc.tn;
       }
+      if (d >= sow) batSem += r.bateas;
     }
-    return { tnMes, ingMes, comMes, costoMes, margenMes, tnDir, batMes,
+    return { tnMes, ingMes, comMes, costoMes, margenMes, tnDir, batSem,
       pctDir: tnMes ? (tnDir / tnMes) * 100 : 0, costoTn: tnMes ? costoMes / tnMes : 0 };
   }, [registros, cfg]);
 
@@ -424,11 +301,11 @@ export default function App() {
     alertas.push({ color: C.amarillo, t: "Falta confirmar precio de grillada", d: `Llamá al corralón. Grillar conviene solo desde ~${$(beG)}/tn.` });
   if (stats.tnMes > 0 && stats.pctDir < 20)
     alertas.push({ color: C.amarillo, t: "Dependés de los socios", d: `Solo ${N(stats.pctDir)}% de las ventas del mes son directas. Cada tn directa recupera ${$(cfg.precioBruta * cfg.comisionSocios / 100)}/tn.` });
-  if (stats.batMes >= cfg.objetivoBruta + cfg.objetivoGrillada)
-    alertas.push({ color: C.verde, t: "Objetivo mensual cumplido", d: `${stats.batMes} bateas este mes. Cada batea extra el mismo día deja casi puro margen.` });
+  if (stats.batSem >= cfg.objetivoSemana)
+    alertas.push({ color: C.verde, t: "Objetivo semanal cumplido", d: `${stats.batSem} bateas esta semana. Cada batea extra el mismo día deja casi puro margen.` });
 
   const semDir = stats.pctDir > 50 ? C.verde : stats.pctDir >= 20 ? C.amarillo : C.rojo;
-  const semBat = stats.batMes >= cfg.objetivoBruta + cfg.objetivoGrillada ? C.verde : stats.batMes >= Math.round(cfg.objetivoBruta + cfg.objetivoGrillada * 0.5) ? C.amarillo : C.rojo;
+  const semBat = stats.batSem >= cfg.objetivoSemana ? C.verde : stats.batSem >= 1 ? C.amarillo : C.rojo;
   const semMar = stats.margenMes > 0 ? C.verde : stats.margenMes < 0 ? C.rojo : C.amarillo;
 
   // historial por cliente (ordenado por margen, mejores arriba)
@@ -437,7 +314,7 @@ export default function App() {
       let tn = 0, margen = 0, cargas = 0, ultima = null;
       for (const r of registros) {
         if (r.clienteId !== cl.id) continue;
-        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
+        const c = econDe(r);
         tn += c.tn; margen += c.margen; cargas += 1;
         if (!ultima || r.fecha > ultima) ultima = r.fecha;
       }
@@ -450,36 +327,14 @@ export default function App() {
     const map = {};
     for (const r of registros) {
       const key = r.fecha.slice(0, 7);
-      const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
-      if (!map[key]) map[key] = { key, tn: 0, bruto: 0, comision: 0, regalia: 0, operacion: 0, costo: 0, margen: 0, bateas: 0, cargas: 0 };
+      const c = econDe(r);
+      if (!map[key]) map[key] = { key, tn: 0, bruto: 0, comision: 0, costo: 0, margen: 0, bateas: 0, cargas: 0 };
       const o = map[key];
       o.tn += c.tn; o.bruto += c.ingresoBruto; o.comision += c.comision;
-      o.regalia += c.regaliaMonto; o.operacion += (c.costoTotal - c.regaliaMonto);
       o.costo += c.costoTotal; o.margen += c.margen; o.bateas += r.bateas; o.cargas += 1;
     }
     return Object.values(map).sort((a, b) => (a.key < b.key ? 1 : -1));
   }, [registros, cfg]);
-
-  const totalFijos = useMemo(() => gastosFijos.reduce((s, g) => s + (parseFloat(g.monto) || 0), 0), [gastosFijos]);
-
-  const mesActivo = mesSel || (resumenMeses[0] ? resumenMeses[0].key : "");
-
-  const resumenPorCliente = useMemo(() => {
-    if (!mesActivo) return [];
-    const map = {};
-    for (const r of registros) {
-      if (r.fecha.slice(0, 7) !== mesActivo) continue;
-      const tn = r.tn != null ? r.tn : (parseFloat(r.bateas) || 0) * cfg.tnPorBatea;
-      const p = r.precioTn;
-      const ingreso = p != null ? tn * p : null;
-      const k = r.clienteId || r.cliente;
-      if (!map[k]) map[k] = { clienteId: r.clienteId, nombre: r.cliente, cargas: [], tn: 0, ingreso: 0, pendiente: false };
-      map[k].cargas.push({ fecha: r.fecha, bateas: r.bateas, tn, precioTn: p, modo: r.modo, patente: r.patente, ingreso });
-      map[k].tn += tn;
-      if (ingreso != null) map[k].ingreso += ingreso; else map[k].pendiente = true;
-    }
-    return Object.values(map).sort((a, b) => (a.nombre < b.nombre ? -1 : 1));
-  }, [registros, cfg, mesActivo]);
 
   // datos del calendario del mes visible
   const calData = useMemo(() => {
@@ -488,7 +343,7 @@ export default function App() {
       const d = new Date(r.fecha + "T00:00:00");
       if (d.getFullYear() === cal.y && d.getMonth() === cal.m) {
         const day = d.getDate();
-        const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
+        const c = econDe(r);
         if (!days[day]) days[day] = { tn: 0, bateas: 0, cargas: 0 };
         days[day].tn += c.tn; days[day].bateas += r.bateas; days[day].cargas += 1;
       }
@@ -512,78 +367,52 @@ export default function App() {
     setCal((c) => { let m = c.m + delta, y = c.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } return { y, m }; });
   }
 
-  // proyección: suma bruta + grillada con sus objetivos propios
-  const proyB = calcDia(cfg, "bruta", cfg.objetivoBruta * cfg.tnPorBatea);
-  const proyG = calcDia(cfg, "grillada", cfg.objetivoGrillada * cfg.tnPorBatea);
-  const proyMes = proyB.margen + proyG.margen;
-  const proyAnio = proyMes * 12;
-  const proyTotalBat = (cfg.objetivoBruta || 0) + (cfg.objetivoGrillada || 0);
-
-  // al cambiar bateas, autocompleta toneladas con la batea estándar (editable aparte)
-  const setBateasReg = (v) => { setFBateas(v); setFTn(String((parseFloat(v) || 0) * cfg.tnPorBatea)); };
-  const setBateasProg = (v) => { setPBateas(v); setPTn(String((parseFloat(v) || 0) * cfg.tnPorBatea)); };
-
-  function resetFormCarga() {
-    setFBateas(1); setFTn(cfg.tnPorBatea); setFFromProg(null); setFPatente(""); setFPrecio(""); setFTraenEquipo(false);
-  }
+  // proyección
+  const proySem = calcDia(cfg, modo, cfg.objetivoSemana).margen;
+  const proyMes = proySem * 4.33, proyAnio = proySem * 52;
 
   function registrar() {
     const b = parseFloat(fBateas) || 0;
-    const tn = parseFloat(fTn) || 0;
-    const precio = parseFloat(fPrecio) > 0 ? parseFloat(fPrecio) : null;
-    if (tn <= 0 || !fClienteId) return;
+    if (b <= 0 || !fClienteId) return;
     const cl = clientes.find((c) => String(c.id) === String(fClienteId));
     setRegistros((rs) => [
-      { id: Date.now(), fecha: fFecha, modo: fModo, bateas: b, tn, precioTn: precio,
+      { id: newId(), fecha: fFecha, modo: fModo, bateas: b,
         clienteId: fClienteId, cliente: cl ? cl.nombre : "—", canal: fCanal,
-        patente: fPatente.trim(), traenEquipo: fTraenEquipo },
+        econ: calcDia(cfg, fModo, b) },
       ...rs,
     ]);
-    if (fFromProg) setProgramadas((ps) => ps.filter((x) => x.id !== fFromProg));
-    resetFormCarga();
+    setFBateas(1);
   }
   function borrar(id) { setRegistros((rs) => rs.filter((r) => r.id !== id)); }
 
-  function guardarEditPrecio(id) {
-    const p = parseFloat(editPrecio);
-    setRegistros((rs) => rs.map((r) => r.id === id ? { ...r, precioTn: p > 0 ? p : null } : r));
-    setEditingRegId(null); setEditPrecio("");
-  }
-
   function programar() {
     const b = parseFloat(pBateas) || 0;
-    const tn = parseFloat(pTn) || 0;
-    const precio = parseFloat(pPrecio) > 0 ? parseFloat(pPrecio) : null;
-    if (tn <= 0 || !pClienteId || !pFecha) return;
+    if (b <= 0 || !pClienteId || !pFecha) return;
     const cl = clientes.find((c) => String(c.id) === String(pClienteId));
     setProgramadas((ps) => [
       ...ps,
-      { id: Date.now(), fecha: pFecha, clienteId: pClienteId, cliente: cl ? cl.nombre : "—",
-        canal: cl ? cl.canal : "Socios", bateas: b, tn, precioTn: precio, modo: pModo,
-        nota: pNota.trim(), patente: pPatente.trim(), traenEquipo: pTraenEquipo },
+      { id: newId(), fecha: pFecha, clienteId: pClienteId, cliente: cl ? cl.nombre : "—",
+        canal: cl ? cl.canal : "Socios", bateas: b, modo: pModo, nota: pNota.trim() },
     ]);
-    setPBateas(1); setPTn(cfg.tnPorBatea); setPNota(""); setPClienteId(""); setPPatente(""); setPPrecio(""); setPTraenEquipo(false);
+    setPBateas(1); setPNota(""); setPClienteId("");
   }
   function descartarProgramada(id) { setProgramadas((ps) => ps.filter((p) => p.id !== id)); }
-
-  // "Se hizo": pasa la carga al formulario de registro para confirmar/ajustar toneladas
-  function prepararDesdeProg(p) {
-    setFFecha(p.fecha); setFClienteId(p.clienteId); setFCanal(p.canal || "Socios");
-    setFModo(p.modo); setFBateas(p.bateas);
-    setFTn(p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea);
-    setFPatente(p.patente || "");
-    setFPrecio(p.precioTn != null ? String(p.precioTn) : "");
-    setFTraenEquipo(p.traenEquipo || false);
-    setFFromProg(p.id);
-    const el = document.getElementById("formCarga");
-    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  function registrarProgramada(p) {
+    const b = parseFloat(p.bateas) || 0;
+    setRegistros((rs) => [
+      { id: newId(), fecha: p.fecha, modo: p.modo, bateas: b,
+        clienteId: p.clienteId, cliente: p.cliente, canal: p.canal,
+        econ: calcDia(cfg, p.modo, b) },
+      ...rs,
+    ]);
+    setProgramadas((ps) => ps.filter((x) => x.id !== p.id));
   }
   function mensajeProg(p) {
-    const tn = p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
+    const tn = (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
     let m = `*Carga El Retiro* — ${fechaCorta(p.fecha)}\n`;
     m += `Cliente: ${p.cliente}\n`;
-    m += `${p.bateas} batea(s) · arena ${p.modo} · ${N(tn)} tn · ${$(p.precioTn != null ? p.precioTn : (p.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta))}/tn`;
-    if (p.patente) m += `\nCamión: ${p.patente}`;
+    m += `${p.bateas} batea(s) · arena ${p.modo}\n`;
+    m += `Total: ${N(tn)} tn`;
     if (p.nota) m += `\nNota: ${p.nota}`;
     return m;
   }
@@ -599,304 +428,27 @@ export default function App() {
     if (!cNombre.trim()) return;
     setClientes((cs) => [
       ...cs,
-      { id: Date.now(), nombre: cNombre.trim(), localidad: cLocalidad.trim(), tel: cTel.trim(), canal: cCanal, traenEquipo: cTraenEquipo },
+      { id: newId(), nombre: cNombre.trim(), localidad: cLocalidad.trim(), tel: cTel.trim(), canal: cCanal },
     ]);
-    setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios"); setCTraenEquipo(false);
+    setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios");
   }
   function borrarCliente(id) { setClientes((cs) => cs.filter((c) => c.id !== id)); }
-  function abrirEditCliente(cl) {
-    setEditingCliId(cl.id); setEditCliNombre(cl.nombre); setEditCliLocalidad(cl.localidad || "");
-    setEditCliTel(cl.tel || ""); setEditCliCanal(cl.canal || "Socios"); setEditCliTraenEquipo(cl.traenEquipo || false);
-  }
-  function guardarEditCliente() {
-    if (!editCliNombre.trim()) return;
-    setClientes((cs) => cs.map((c) => c.id === editingCliId
-      ? { ...c, nombre: editCliNombre.trim(), localidad: editCliLocalidad.trim(), tel: editCliTel.trim(), canal: editCliCanal, traenEquipo: editCliTraenEquipo }
-      : c));
-    setEditingCliId(null);
-  }
-
-  // ── GASTOS FIJOS ─────────────────────────────────────────
-  const [gNombre, setGNombre] = useState("");
-  const [gMonto, setGMonto] = useState("");
-  const [editingGastoId, setEditingGastoId] = useState(null);
-  const [editGNombre, setEditGNombre] = useState("");
-  const [editGMonto, setEditGMonto] = useState("");
-
-  function agregarGasto() {
-    if (!gNombre.trim() || !(parseFloat(gMonto) > 0)) return;
-    setGastosFijos((gs) => [...gs, { id: Date.now(), nombre: gNombre.trim(), monto: parseFloat(gMonto) }]);
-    setGNombre(""); setGMonto("");
-  }
-  function borrarGasto(id) { setGastosFijos((gs) => gs.filter((g) => g.id !== id)); }
-  function abrirEditGasto(g) { setEditingGastoId(g.id); setEditGNombre(g.nombre); setEditGMonto(String(g.monto)); }
-  function guardarEditGasto() {
-    if (!editGNombre.trim() || !(parseFloat(editGMonto) > 0)) return;
-    setGastosFijos((gs) => gs.map((g) => g.id === editingGastoId ? { ...g, nombre: editGNombre.trim(), monto: parseFloat(editGMonto) } : g));
-    setEditingGastoId(null);
-  }
-
-  function fijarObjetivo() {
-    const vB = parseFloat(bateasB) || 0, vG = parseFloat(bateasG) || 0;
-    setCfg((c) => ({ ...c, objetivoBruta: vB, objetivoGrillada: vG }));
-    setCfgDraft((d) => ({ ...d, objetivoBruta: vB, objetivoGrillada: vG }));
-  }
 
   function elegirCliente(id) {
     setFClienteId(id);
     const cl = clientes.find((c) => String(c.id) === String(id));
-    if (cl) { setFCanal(cl.canal); setFTraenEquipo(cl.traenEquipo || false); }
-  }
-
-  function descargar(nombre, contenido, tipo) {
-    const blob = new Blob([contenido], { type: tipo });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = nombre;
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  function exportarResumenCSV() {
-    try {
-      const sep = ";";
-      const head = ["Mes", "Bateas", "Toneladas", "Ingreso bruto", "Comision socios", "Costo", "Margen"];
-      const filas = [...resumenMeses].sort((a, b) => (a.key < b.key ? -1 : 1)).map((m) => [
-        mesLabel(m.key), m.bateas, Math.round(m.tn), Math.round(m.bruto), Math.round(m.comision), Math.round(m.costo), Math.round(m.margen),
-      ]);
-      const csv = "\uFEFF" + [head, ...filas].map((r) => r.join(sep)).join("\n");
-      descargar(`el-retiro-resumen-${todayISO()}.csv`, csv, "text/csv;charset=utf-8;");
-    } catch {}
-  }
-
-  async function dibujarResumen(key) {
-    const m = resumenMeses.find((x) => x.key === key);
-    if (!m) return null;
-    const W = 900, H = 760, s = 2;
-    const cv = document.createElement("canvas");
-    cv.width = W * s; cv.height = H * s;
-    const ctx = cv.getContext("2d");
-    ctx.scale(s, s);
-    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = "#540c18"; ctx.fillRect(0, 0, W, 12);
-    ctx.textBaseline = "alphabetic";
-
-    // intentar cargar el logo
-    let logoY = 108;
-    try {
-      const img = await new Promise((res, rej) => {
-        const i = new Image(); i.crossOrigin = "anonymous";
-        i.onload = () => res(i); i.onerror = rej;
-        i.src = "/logo.png";
-      });
-      const lh = 90, lw = Math.round(lh * img.naturalWidth / img.naturalHeight);
-      ctx.drawImage(img, (W - lw) / 2, 20, lw, lh);
-      logoY = 128;
-    } catch {
-      ctx.fillStyle = "#540c18";
-      ctx.font = "800 42px Archivo, Arial, sans-serif";
-      ctx.fillText("EL RETIRO", 48, 88);
-      logoY = 116;
-    }
-    ctx.fillStyle = "#7a736b";
-    ctx.font = "600 15px 'IBM Plex Mono', monospace";
-    ctx.textAlign = "center";
-    ctx.fillText("RESUMEN MENSUAL · SOL DE JULIO", W / 2, logoY);
-    ctx.textAlign = "left";
-    ctx.fillStyle = "#1a1714";
-    ctx.font = "800 36px Archivo, Arial, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(mesLabel(key), W / 2, logoY + 46);
-    ctx.textAlign = "left";
-    ctx.strokeStyle = "#e6e2da"; ctx.lineWidth = 1;
-    const divY = logoY + 64;
-    ctx.beginPath(); ctx.moveTo(48, divY); ctx.lineTo(W - 48, divY); ctx.stroke();
-
-    const rowOut = (y, label, value, opts = {}) => {
-      ctx.textAlign = "left";
-      ctx.fillStyle = opts.lblColor || "#7a736b";
-      ctx.font = (opts.big ? "700 " : "500 ") + (opts.big ? "26px" : "22px") + " Archivo, Arial, sans-serif";
-      ctx.fillText(label, 48, y);
-      ctx.textAlign = "right";
-      ctx.fillStyle = opts.valColor || "#1a1714";
-      ctx.font = "700 " + (opts.big ? "30px" : "24px") + " 'IBM Plex Mono', monospace";
-      ctx.fillText(value, W - 48, y);
-      ctx.textAlign = "left";
-    };
-
-    let y = divY + 52;
-    rowOut(y, "Bateas cargadas", N(m.bateas)); y += 46;
-    rowOut(y, "Toneladas", `${N(m.tn)} tn`); y += 54;
-    ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, y - 22); ctx.lineTo(W - 48, y - 22); ctx.stroke();
-
-    rowOut(y, "Ingreso bruto total", `$${N(m.bruto)}`); y += 46;
-
-    // Para socios
-    ctx.fillStyle = "#ca8a0418"; ctx.fillRect(40, y - 30, W - 80, 40);
-    rowOut(y, `▸ Para socios (${cfg.comisionSocios}%)`, `$${N(m.comision)}`, { valColor: "#ca8a04" }); y += 46;
-
-    // Costos separados
-    rowOut(y, `▸ Regalía provincial (${cfg.regalia}%)`, `$${N(m.regalia)}`, { valColor: "#dc2626" }); y += 42;
-    rowOut(y, `▸ Operación (pala, gente, varios)`, m.operacion > 0 ? `$${N(m.operacion)}` : "$0", { valColor: m.operacion > 0 ? "#dc2626" : "#15803d" }); y += 58;
-
-    ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, y - 26); ctx.lineTo(W - 48, y - 26); ctx.stroke();
-
-    ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, y - 26); ctx.lineTo(W - 48, y - 26); ctx.stroke();
-
-    // Para el propietario
-    ctx.fillStyle = "#15803d18"; ctx.fillRect(40, y - 30, W - 80, 72);
-    rowOut(y, "Para el propietario (neto)", `$${N(m.margen)}`, { big: true, lblColor: "#1a1714", valColor: m.margen >= 0 ? "#15803d" : "#dc2626" });
-
-    // resumen en una línea
-    ctx.textAlign = "left";
-    ctx.fillStyle = "#7a736b"; ctx.font = "500 13px 'IBM Plex Mono', monospace";
-    ctx.fillText(`Socios: $${N(m.comision)}  ·  Propietario: $${N(m.margen)}  ·  ${m.cargas} carga(s)`, 48, y + 34);
-
-    ctx.fillStyle = "#b0a89a"; ctx.font = "500 12px 'IBM Plex Mono', monospace";
-    ctx.fillText(`Generado ${todayISO()} · El Retiro · Sol de Julio`, 48, H - 24);
-    return cv;
-  }
-
-  async function esperarFuentes() { try { if (document.fonts && document.fonts.ready) await document.fonts.ready; } catch {} }
-
-
-  async function dibujarResumenCliente(mesKey, clienteData) {
-    const rowH = 46, headerH = 220, footerH = 70;
-    const W = 900, H = headerH + rowH * (clienteData.cargas.length + 1) + footerH, s = 2;
-    const cv = document.createElement("canvas");
-    cv.width = W * s; cv.height = H * s;
-    const ctx = cv.getContext("2d");
-    ctx.scale(s, s);
-    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = "#540c18"; ctx.fillRect(0, 0, W, 10);
-    ctx.textBaseline = "alphabetic";
-    try {
-      const img = await new Promise((res, rej) => { const i = new Image(); i.crossOrigin = "anonymous"; i.onload = () => res(i); i.onerror = rej; i.src = "/logo.png"; });
-      const lh = 64, lw = Math.round(lh * img.naturalWidth / img.naturalHeight);
-      ctx.drawImage(img, (W - lw) / 2, 16, lw, lh);
-    } catch {
-      ctx.fillStyle = "#540c18"; ctx.font = "800 32px Archivo, Arial, sans-serif"; ctx.textAlign = "center";
-      ctx.fillText("EL RETIRO", W / 2, 58); ctx.textAlign = "left";
-    }
-    ctx.fillStyle = "#7a736b"; ctx.font = "600 14px 'IBM Plex Mono', monospace"; ctx.textAlign = "center";
-    ctx.fillText("LIQUIDACION MENSUAL - " + mesLabel(mesKey).toUpperCase(), W / 2, 96);
-    ctx.fillStyle = "#1a1714"; ctx.font = "700 26px Archivo, Arial, sans-serif";
-    ctx.fillText(clienteData.nombre.toUpperCase(), W / 2, 132);
-    ctx.textAlign = "left";
-    ctx.strokeStyle = "#e6e2da"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(48, 152); ctx.lineTo(W - 48, 152); ctx.stroke();
-    const cols = [48, 170, 300, 420, 570, W - 48];
-    const aligns = ["left", "left", "right", "right", "right", "right"];
-    let ty = 186;
-    ["FECHA", "MODO", "BATEAS", "TONELADAS", "PRECIO/TN", "SUBTOTAL"].forEach(function(h, i) {
-      ctx.textAlign = aligns[i]; ctx.fillStyle = "#7a736b"; ctx.font = "600 12px IBM Plex Mono, monospace";
-      ctx.fillText(h, cols[i], ty);
-    });
-    ctx.beginPath(); ctx.moveTo(48, ty + 10); ctx.lineTo(W - 48, ty + 10); ctx.stroke();
-    ty += 32;
-    for (var ci = 0; ci < clienteData.cargas.length; ci++) {
-      var c = clienteData.cargas[ci];
-      var vals = [fechaCorta(c.fecha), c.modo, String(c.bateas), N(c.tn) + " tn", c.precioTn != null ? "$" + N(c.precioTn) : "A definir", c.ingreso != null ? "$" + N(c.ingreso) : "--"];
-      vals.forEach(function(v, i) {
-        ctx.textAlign = aligns[i];
-        ctx.fillStyle = (i === 4 && c.precioTn == null) ? "#ca8a04" : "#1a1714";
-        ctx.font = "500 14px Archivo, Arial, sans-serif";
-        ctx.fillText(v, cols[i], ty);
-      });
-      ctx.strokeStyle = "#e6e2da"; ctx.beginPath(); ctx.moveTo(48, ty + 10); ctx.lineTo(W - 48, ty + 10); ctx.stroke();
-      ty += rowH;
-    }
-    ctx.fillStyle = "#540c1812"; ctx.fillRect(40, ty - 4, W - 80, 54);
-    ctx.textAlign = "left"; ctx.fillStyle = "#1a1714"; ctx.font = "700 15px Archivo, Arial, sans-serif";
-    ctx.fillText("TOTAL", 60, ty + 22);
-    ctx.font = "500 13px IBM Plex Mono, monospace"; ctx.fillStyle = "#7a736b";
-    ctx.fillText(N(clienteData.tn) + " tn - " + clienteData.cargas.length + " carga(s)", 60, ty + 40);
-    ctx.textAlign = "right"; ctx.fillStyle = "#15803d"; ctx.font = "700 18px IBM Plex Mono, monospace";
-    ctx.fillText(clienteData.pendiente ? "$" + N(clienteData.ingreso) + " + pendiente" : "$" + N(clienteData.ingreso), W - 48, ty + 26);
-    ctx.textAlign = "left"; ctx.fillStyle = "#b0a89a"; ctx.font = "500 12px IBM Plex Mono, monospace";
-    ctx.fillText("Generado " + todayISO() + " - El Retiro - Sol de Julio", 48, H - 22);
-    return cv;
-  }
-
-  // helper: baja el canvas como PNG directamente
-  function descargarCanvas(cv, nombre) {
-    cv.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = nombre;
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-    }, "image/png");
-  }
-
-  async function compartirImagen() {
-    if (!mesActivo) return;
-    await esperarFuentes();
-    const cv = await dibujarResumen(mesActivo); if (!cv) return;
-    const nombre = `el-retiro-resumen-${mesActivo}.png`;
-    cv.toBlob(async (blob) => {
-      if (!blob) return;
-      try { const f = new File([blob], nombre, { type: "image/png" }); if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: `Resumen ${mesLabel(mesActivo)}` }); return; } } catch {}
-      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-    }, "image/png");
-  }
-
-  async function descargarImagen() {
-    if (!mesActivo) return;
-    await esperarFuentes();
-    const cv = await dibujarResumen(mesActivo); if (!cv) return;
-    descargarCanvas(cv, `el-retiro-resumen-${mesActivo}.png`);
-  }
-
-  async function compartirImagenCliente() {
-    const cl = resumenPorCliente.find((c) => (c.clienteId || c.nombre) === clienteSel);
-    if (!cl || !mesActivo) return;
-    await esperarFuentes();
-    const cv = await dibujarResumenCliente(mesActivo, cl); if (!cv) return;
-    const nombre = `liquidacion-${cl.nombre.replace(/\s+/g, "-")}-${mesActivo}.png`;
-    cv.toBlob(async (blob) => {
-      if (!blob) return;
-      try { const f = new File([blob], nombre, { type: "image/png" }); if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: `Liquidación ${cl.nombre}` }); return; } } catch {}
-      const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-    }, "image/png");
-  }
-
-  async function descargarImagenCliente() {
-    const cl = resumenPorCliente.find((c) => (c.clienteId || c.nombre) === clienteSel);
-    if (!cl || !mesActivo) return;
-    await esperarFuentes();
-    const cv = await dibujarResumenCliente(mesActivo, cl); if (!cv) return;
-    descargarCanvas(cv, `liquidacion-${cl.nombre.replace(/\s+/g, "-")}-${mesActivo}.png`);
-  }
-
-  function exportarClienteCSV() {
-    const cl = resumenPorCliente.find((c) => (c.clienteId || c.nombre) === clienteSel);
-    if (!cl || !mesActivo) return;
-    const sep = ";";
-    const head = ["Fecha", "Modo", "Bateas", "Toneladas", "Precio/tn", "Subtotal"];
-    const filas = cl.cargas.map((c) => [
-      fechaCorta(c.fecha), c.modo, c.bateas, Math.round(c.tn),
-      c.precioTn != null ? c.precioTn : "A definir",
-      c.ingreso != null ? Math.round(c.ingreso) : "",
-    ]);
-    const total = ["TOTAL", "", cl.cargas.length + " cargas", Math.round(cl.tn), "", Math.round(cl.ingreso)];
-    const csv = "\uFEFF" + [head, ...filas, total].map((r) => r.join(sep)).join("\n");
-    descargar(`liquidacion-${cl.nombre.replace(/\s+/g, "-")}-${mesActivo}.csv`, csv, "text/csv;charset=utf-8;");
-  }
-
-  async function pdfResumen() {
-    if (!mesActivo) return;
-    await esperarFuentes();
-    const cv = await dibujarResumen(mesActivo); if (!cv) return;
-    const data = cv.toDataURL("image/png");
-    const w = window.open("", "_blank");
-    if (!w) { descargarCanvas(cv, `el-retiro-resumen-${mesActivo}.png`); return; }
-    w.document.write(`<html><head><title>Resumen ${mesLabel(mesActivo)}</title><meta name="viewport" content="width=device-width, initial-scale=1"><style>@page{margin:12mm;}body{margin:0;text-align:center;}img{width:100%;max-width:760px;}</style></head><body><img src="${data}" onload="setTimeout(function(){window.print();},250)"/></body></html>`);
-    w.document.close();
+    if (cl) setFCanal(cl.canal);
   }
 
   function exportar() {
     try {
       const data = { app: "El Retiro", version: 1, fecha: new Date().toISOString(), cfg, registros, clientes, programadas };
-      descargar(`el-retiro-respaldo-${todayISO()}.json`, JSON.stringify(data, null, 2), "application/json");
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `el-retiro-respaldo-${todayISO()}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
       setImportErr("");
     } catch { setImportErr("No se pudo exportar en este navegador."); }
   }
@@ -1001,38 +553,6 @@ export default function App() {
         }
       `}</style>
 
-      {!authReady ? (
-        <div className="app" style={{ paddingTop: 90, textAlign: "center", color: C.ink2, fontFamily: "'IBM Plex Mono',monospace" }}>Cargando…</div>
-      ) : !user ? (
-        <div className="app" style={{ maxWidth: 430 }}>
-          <div style={{ marginTop: 36, marginBottom: 22, textAlign: "center" }}>
-            {logoOk ? (
-              <img src="/logo.png" alt="El Retiro" onError={() => setLogoOk(false)}
-                style={{ width: "min(240px, 70%)", height: "auto", display: "block", margin: "0 auto" }} />
-            ) : (
-              <h1 style={{ margin: 0, fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 34, letterSpacing: "-0.02em", color: C.accent }}>EL RETIRO</h1>
-            )}
-            <div className="label" style={{ marginTop: 12 }}>Panel de control · Arenera · Sol de Julio</div>
-          </div>
-          <div className="card">
-            <div style={{ fontWeight: 700, fontSize: 19, marginBottom: 18, fontFamily: "Archivo, sans-serif" }}>{authMode === "signup" ? "Crear cuenta" : "Iniciar sesión"}</div>
-            <label style={{ display: "block", marginBottom: 12 }}>
-              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Email</span>
-              <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} type="email" inputMode="email" autoCapitalize="none" value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} /></div>
-            </label>
-            <label style={{ display: "block", marginBottom: 16 }}>
-              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Contraseña</span>
-              <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} type="password" value={authPass} onChange={(e) => setAuthPass(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") entrar(); }} /></div>
-            </label>
-            {authErr && <div style={{ color: C.rojo, fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{authErr}</div>}
-            <button className="btn" style={{ width: "100%" }} disabled={authBusy} onClick={entrar}>{authBusy ? "Entrando…" : (authMode === "signup" ? "Crear cuenta" : "Entrar")}</button>
-            <div style={{ textAlign: "center", marginTop: 14, fontSize: 13, color: C.ink2 }}>
-              {authMode === "signup" ? "¿Ya tenés cuenta? " : "¿Primera vez? "}
-              <button onClick={() => { setAuthMode(authMode === "signup" ? "signin" : "signup"); setAuthErr(""); }} style={{ border: 0, background: "transparent", color: C.accent, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>{authMode === "signup" ? "Iniciar sesión" : "Crear cuenta"}</button>
-            </div>
-          </div>
-        </div>
-      ) : (
       <div className="app">
         {/* HEADER */}
         <header style={{ marginBottom: 24, paddingBottom: 20, borderBottom: `2px solid ${C.ink}` }}>
@@ -1046,43 +566,9 @@ export default function App() {
               )}
               <div className="label" style={{ color: C.accent, marginTop: 10 }}>Panel de control · Arenera · Sol de Julio</div>
             </div>
-            <div className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar costos" : "Editar costos generales"}</button>
-              <button className="tog" onClick={() => signOut(auth)}>Salir</button>
-            </div>
+            <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
           </div>
         </header>
-
-        {/* CONFIGURACIÓN (se abre debajo del botón Editar supuestos) */}
-        {showCfg && (
-          <Section tag="Parámetros" title="Supuestos editables"
-            right={<button className="tog" onClick={() => setCfgDraft({ ...DEFAULTS })}>Restablecer</button>}>
-            <div className="grid-3" style={{ rowGap: 16 }}>
-              <Field label="Precio bruta" value={cfgDraft.precioBruta} onChange={setD("precioBruta")} suffix="$/tn" />
-              <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" />
-              <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
-              <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
-              <Field label="Objetivo bruta/mes" value={cfgDraft.objetivoBruta} onChange={setD("objetivoBruta")} suffix="bateas" />
-              <Field label="Objetivo grillada/mes" value={cfgDraft.objetivoGrillada} onChange={setD("objetivoGrillada")} suffix="bateas" />
-              <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
-              <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" />
-              <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" />
-              <Field label="Reserva pala" value={cfgDraft.palaReserva} onChange={setD("palaReserva")} suffix="$/h" />
-              <Field label="Jornal" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" />
-              <Field label="Horas pala (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" />
-              <Field label="Horas pala (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" />
-              <Field label="Jornales (bruta)" value={cfgDraft.jornalesBruta} onChange={setD("jornalesBruta")} />
-              <Field label="Jornales (grillada)" value={cfgDraft.jornalesGrillada} onChange={setD("jornalesGrillada")} />
-              <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" />
-            </div>
-            <div className="row" style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.line}`, alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-              <button className="btn" style={{ background: cfgDirty ? C.accent : C.ink2, cursor: cfgDirty ? "pointer" : "default" }} disabled={!cfgDirty} onClick={guardarCfg}>Guardar supuestos</button>
-              {cfgSaved && <span className="num" style={{ fontSize: 13, color: C.verde }}>✓ Guardado</span>}
-              {!cfgSaved && cfgDirty && <span className="num" style={{ fontSize: 13, color: C.amarillo }}>Cambios sin guardar</span>}
-              {!cfgSaved && !cfgDirty && <span style={{ fontSize: 13, color: C.ink2 }}>Los números de toda la app usan estos valores guardados.</span>}
-            </div>
-          </Section>
-        )}
 
         {/* ALERTAS */}
         {alertas.length > 0 && (
@@ -1103,7 +589,7 @@ export default function App() {
         <div className="grid-kpi" style={{ marginBottom: 22 }}>
           <Kpi label="Margen del mes" value={$(stats.margenMes)} sub={`${N(stats.tnMes)} tn cargadas`} color={semMar} />
           <Kpi label="Ventas directas" value={`${N(stats.pctDir)}%`} sub="cuanto más alto, más recuperás del 30%" color={semDir} />
-          <Kpi label="Bateas este mes" value={`${stats.batMes} / ${cfg.objetivoBruta + cfg.objetivoGrillada}`} sub="objetivo mensual" color={semBat} />
+          <Kpi label="Bateas esta semana" value={`${stats.batSem} / ${cfg.objetivoSemana}`} sub="objetivo semanal" color={semBat} />
           <Kpi label="Comisión socios (mes)" value={$(stats.comMes)} sub="tu mayor costo" color={C.accent} />
         </div>
 
@@ -1129,62 +615,37 @@ export default function App() {
           </Section>
 
           {/* Calculadora del día */}
-          <Section tag="Calculadora" title="Día de carga">
-            {(() => {
-              const diaB = calcDia(cfg, "bruta", bateasB * cfg.tnPorBatea);
-              const diaG = calcDia(cfg, "grillada", bateasG * cfg.tnPorBatea);
-              const total = {
-                tn: diaB.tn + diaG.tn,
-                ingresoBruto: diaB.ingresoBruto + diaG.ingresoBruto,
-                comision: diaB.comision + diaG.comision,
-                gasoil: diaB.gasoil + diaG.gasoil, reserva: diaB.reserva + diaG.reserva,
-                manoObra: diaB.manoObra + diaG.manoObra, varios: diaB.varios + diaG.varios,
-                regaliaMonto: diaB.regaliaMonto + diaG.regaliaMonto,
-                amortGrilla: diaG.amortGrilla, margen: diaB.margen + diaG.margen,
-              };
-              const totalBat = bateasB + bateasG;
-              const yaFijado = bateasB === (cfg.objetivoBruta || 0) && bateasG === (cfg.objetivoGrillada || 0);
-              return (
-                <>
-                  <div style={{ marginBottom: 12 }}>
-                    <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                      <span className="label" style={{ color: "#2563eb" }}>Bateas bruta</span>
-                      <span className="num" style={{ fontSize: 16, color: "#2563eb" }}>{bateasB} bat · {N(diaB.tn)} tn</span>
-                    </div>
-                    <input type="range" min={0} max={30} value={bateasB} onChange={(e) => setBateasB(parseInt(e.target.value))} style={{ width: "100%", accentColor: "#2563eb" }} />
-                  </div>
-                  <div style={{ marginBottom: 16 }}>
-                    <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                      <span className="label" style={{ color: "#7c3aed" }}>Bateas grillada</span>
-                      <span className="num" style={{ fontSize: 16, color: "#7c3aed" }}>{bateasG} bat · {N(diaG.tn)} tn</span>
-                    </div>
-                    <input type="range" min={0} max={20} value={bateasG} onChange={(e) => setBateasG(parseInt(e.target.value))} style={{ width: "100%", accentColor: "#7c3aed" }} />
-                  </div>
-                  <div className="row" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                    <span className="num" style={{ fontSize: 13, color: C.ink2 }}>Total: <b style={{ color: C.ink }}>{totalBat} bat · {N(total.tn)} tn</b></span>
-                    <button className="tog" style={{ fontSize: 11, padding: "5px 10px" }} onClick={fijarObjetivo}>{yaFijado ? `✓ objetivo` : `Fijar ${bateasB}B + ${bateasG}G como objetivo`}</button>
-                  </div>
-                  <table style={{ width: "100%" }} className="brk">
-                    <tbody>
-                      <tr><td>Ingreso bruto</td><td className="num">{$(total.ingresoBruto)}</td></tr>
-                      <tr><td>− Socios ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(total.comision)}</td></tr>
-                      <tr><td>− Gasoil + pala</td><td className="num" style={{ color: C.rojo }}>−{N(total.gasoil + total.reserva)}</td></tr>
-                      <tr><td>− Mano de obra + varios</td><td className="num" style={{ color: C.rojo }}>−{N(total.manoObra + total.varios)}</td></tr>
-                      <tr><td>− Regalía{total.amortGrilla ? " + amort. grilla" : ""}</td><td className="num" style={{ color: C.rojo }}>−{N(total.regaliaMonto + total.amortGrilla)}</td></tr>
-                    </tbody>
-                  </table>
-                  <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginTop: 14, paddingTop: 14, borderTop: `2px solid ${C.ink}` }}>
-                    <span style={{ fontWeight: 700, fontSize: 15 }}>Margen combinado</span>
-                    <span className="num" style={{ fontSize: 26, color: total.margen >= 0 ? C.verde : C.rojo }}>{$(total.margen)}</span>
-                  </div>
-                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 8, fontSize: 12.5 }}>
-                    {bateasB > 0 && <span style={{ color: "#2563eb" }}>Bruta: {$(diaB.margen / bateasB)}/bat</span>}
-                    {bateasG > 0 && <span style={{ color: "#7c3aed" }}>Grillada: {$(diaG.margen / bateasG)}/bat</span>}
-                    {total.tn > 0 && <span style={{ color: C.ink2 }}>{$(total.margen / total.tn)}/tn</span>}
-                  </div>
-                </>
-              );
-            })()}
+          <Section tag="Calculadora" title="Día de carga"
+            right={
+              <div className="row" style={{ gap: 0 }}>
+                <button className={"tog" + (modo === "bruta" ? " on" : "")} style={{ borderRadius: "10px 0 0 10px" }} onClick={() => setModo("bruta")}>Bruta</button>
+                <button className={"tog" + (modo === "grillada" ? " on" : "")} style={{ borderRadius: "0 10px 10px 0", borderLeft: 0 }} onClick={() => setModo("grillada")}>Grillada</button>
+              </div>
+            }>
+            <div style={{ marginBottom: 16 }}>
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                <span className="label">Bateas a cargar</span>
+                <span className="num" style={{ fontSize: 18, color: C.accent }}>{bateas} · {N(dia.tn)} tn</span>
+              </div>
+              <input type="range" min={1} max={10} value={bateas} onChange={(e) => setBateas(parseInt(e.target.value))}
+                style={{ width: "100%", accentColor: C.accent }} />
+            </div>
+            <table style={{ width: "100%" }} className="brk">
+              <tbody>
+                <tr><td>Ingreso bruto</td><td className="num">{$(dia.ingresoBruto)}</td></tr>
+                <tr><td>− Socios ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(dia.comision)}</td></tr>
+                <tr><td>− Gasoil + pala</td><td className="num" style={{ color: C.rojo }}>−{N(dia.gasoil + dia.reserva)}</td></tr>
+                <tr><td>− Mano de obra + varios</td><td className="num" style={{ color: C.rojo }}>−{N(dia.manoObra + dia.varios)}</td></tr>
+                <tr><td>− Regalía{dia.amortGrilla ? " + amort. grilla" : ""}</td><td className="num" style={{ color: C.rojo }}>−{N(dia.regaliaMonto + dia.amortGrilla)}</td></tr>
+              </tbody>
+            </table>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginTop: 14, paddingTop: 14, borderTop: `2px solid ${C.ink}` }}>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Margen del día</span>
+              <span className="num" style={{ fontSize: 26, color: dia.margen >= 0 ? C.verde : C.rojo }}>{$(dia.margen)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", color: C.ink2, fontSize: 12.5, marginTop: 6 }}>
+              <span>{$(dia.margenBatea)} / batea</span><span>{$(dia.margenTn)} / tn</span>
+            </div>
           </Section>
         </div>
 
@@ -1214,53 +675,12 @@ export default function App() {
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
               <div className="inputWrap selectWrap">
                 <select className="input" value={cCanal} onChange={(e) => setCCanal(e.target.value)}>
-                  <option value="Socios">Socios (descuenta comisión)</option><option value="Directo">Directo (precio entero para mí)</option>
+                  <option>Socios</option><option>Directo</option>
                 </select>
               </div>
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", paddingTop: 22 }}>
-              <input type="checkbox" checked={cTraenEquipo} onChange={(e) => setCTraenEquipo(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.accent, flexShrink: 0 }} />
-              <span style={{ fontSize: 13, color: cTraenEquipo ? C.accent : C.ink2, fontWeight: cTraenEquipo ? 700 : 400, lineHeight: 1.3 }}>Traen su equipo<br/><span style={{ fontWeight: 400, fontSize: 12 }}>(sin costo de pala ni personal)</span></span>
-            </label>
             <button className="btn" onClick={agregarCliente}>+ Agregar</button>
           </div>
-
-          {editingCliId && (
-            <div style={{ background: `${C.accent}0c`, border: `1px solid ${C.accent}44`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
-              <div className="label" style={{ marginBottom: 10 }}>Editando cliente</div>
-              <div className="grid-3" style={{ rowGap: 12, marginBottom: 12 }}>
-                <label style={{ display: "block" }}>
-                  <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Nombre</span>
-                  <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={editCliNombre} onChange={(e) => setEditCliNombre(e.target.value)} /></div>
-                </label>
-                <label style={{ display: "block" }}>
-                  <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Localidad</span>
-                  <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={editCliLocalidad} onChange={(e) => setEditCliLocalidad(e.target.value)} /></div>
-                </label>
-                <label style={{ display: "block" }}>
-                  <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Teléfono</span>
-                  <div className="inputWrap"><input className="input" value={editCliTel} onChange={(e) => setEditCliTel(e.target.value)} /></div>
-                </label>
-                <label style={{ display: "block" }}>
-                  <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
-                  <div className="inputWrap selectWrap">
-                    <select className="input" value={editCliCanal} onChange={(e) => setEditCliCanal(e.target.value)}>
-                      <option value="Socios">Socios (descuenta comisión)</option>
-                      <option value="Directo">Directo (precio entero para mí)</option>
-                    </select>
-                  </div>
-                </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", paddingTop: 22 }}>
-                  <input type="checkbox" checked={editCliTraenEquipo} onChange={(e) => setEditCliTraenEquipo(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.accent, flexShrink: 0 }} />
-                  <span style={{ fontSize: 13, color: editCliTraenEquipo ? C.accent : C.ink2, fontWeight: editCliTraenEquipo ? 700 : 400, lineHeight: 1.3 }}>Traen su equipo<br/><span style={{ fontWeight: 400, fontSize: 12 }}>(sin costo de pala ni personal)</span></span>
-                </label>
-              </div>
-              <div className="row" style={{ gap: 10 }}>
-                <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={guardarEditCliente}>Guardar</button>
-                <button className="tog" onClick={() => setEditingCliId(null)}>Cancelar</button>
-              </div>
-            </div>
-          )}
 
           {clientes.length === 0 ? (
             <div style={{ color: C.ink2, fontSize: 14, padding: "16px 0" }}>Cargá tus corralones y clientes acá. Después los elegís de la lista al registrar cada venta y la app te arma el historial de cada uno.</div>
@@ -1273,19 +693,13 @@ export default function App() {
                     <tr key={c.id}>
                       <td data-label="Cliente" style={{ fontWeight: 600 }}>{c.nombre}</td>
                       <td data-label="Localidad" style={{ color: C.ink2 }}>{c.localidad || "—"}</td>
-                      <td data-label="Canal">
-                        <span className="pill" style={{ background: c.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: c.canal === "Directo" ? C.verde : C.amarillo }}>{c.canal === "Directo" ? "Directo" : "Socios"}</span>
-                        {c.traenEquipo && <span className="pill" style={{ background: `${C.accent}1a`, color: C.accent, marginLeft: 4 }}>Su equipo</span>}
-                      </td>
+                      <td data-label="Canal"><span className="pill" style={{ background: c.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: c.canal === "Directo" ? C.verde : C.amarillo }}>{c.canal}</span></td>
                       <td data-label="Tel" className="num" style={{ fontSize: 12.5 }}>{c.tel || "—"}</td>
                       <td data-label="Tn total" className="num" style={{ textAlign: "right" }}>{N(c.tn)}</td>
                       <td data-label="Margen" className="num" style={{ textAlign: "right", color: c.margen > 0 ? C.verde : C.ink2 }}>{$(c.margen)}</td>
                       <td data-label="Cargas" className="num" style={{ textAlign: "right" }}>{c.cargas}</td>
                       <td data-label="Última" className="num" style={{ fontSize: 12.5 }}>{c.ultima || "—"}</td>
-                      <td data-label="" style={{ textAlign: "right" }}>
-                        <button className="del" style={{ marginRight: 6, color: C.accent }} onClick={() => abrirEditCliente(c)}>✎</button>
-                        <button className="del" onClick={() => borrarCliente(c.id)}>×</button>
-                      </td>
+                      <td data-label="" style={{ textAlign: "right" }}><button className="del" onClick={() => borrarCliente(c.id)}>×</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -1307,38 +721,26 @@ export default function App() {
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cliente</span>
               <div className="inputWrap selectWrap">
-                <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={pClienteId} onChange={(e) => { const id = e.target.value; setPClienteId(id); const cl = clientes.find((c) => String(c.id) === id); if (cl) { setPTraenEquipo(cl.traenEquipo || false); } }}>
+                <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={pClienteId} onChange={(e) => setPClienteId(e.target.value)}>
                   <option value="">{clientes.length ? "Elegí…" : "Agregá un cliente ↓"}</option>
                   {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre}{c.localidad ? ` · ${c.localidad}` : ""}</option>)}
                 </select>
               </div>
             </label>
-            <Field label="Bateas" value={pBateas} onChange={setBateasProg} />
-            <Field label="Toneladas" value={pTn} onChange={setPTn} suffix="tn" />
+            <Field label="Bateas" value={pBateas} onChange={setPBateas} />
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Modo</span>
               <div className="inputWrap selectWrap">
-                <select className="input" value={pModo} onChange={(e) => { const m = e.target.value; setPModo(m); setPPrecio(String(m === "grillada" ? cfg.precioGrillada : cfg.precioBruta)); }}>
+                <select className="input" value={pModo} onChange={(e) => setPModo(e.target.value)}>
                   <option value="bruta">Bruta</option><option value="grillada">Grillada</option>
                 </select>
               </div>
             </label>
-            <Field label="Precio/tn" value={pPrecio} onChange={setPPrecio} suffix="$" />
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Nota</span>
               <div className="inputWrap">
                 <input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={pNota} placeholder="opcional…" onChange={(e) => setPNota(e.target.value)} />
               </div>
-            </label>
-            <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Patente</span>
-              <div className="inputWrap">
-                <input className="input" style={{ fontFamily: "Archivo, sans-serif", textTransform: "uppercase" }} value={pPatente} placeholder="ABC 123" onChange={(e) => setPPatente(e.target.value.toUpperCase())} />
-              </div>
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", paddingTop: 22 }}>
-              <input type="checkbox" checked={pTraenEquipo} onChange={(e) => setPTraenEquipo(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.accent, flexShrink: 0 }} />
-              <span style={{ fontSize: 13, color: pTraenEquipo ? C.accent : C.ink2, fontWeight: pTraenEquipo ? 700 : 400, lineHeight: 1.3 }}>Traen su equipo<br/><span style={{ fontWeight: 400, fontSize: 12 }}>(sin costo operativo)</span></span>
             </label>
           </div>
           <button className="btn" style={{ marginBottom: 18 }} onClick={programar}>+ Programar carga</button>
@@ -1350,7 +752,7 @@ export default function App() {
               {programadasSort.map((p) => {
                 const hoy = todayISO();
                 const estado = p.fecha < hoy ? { c: C.rojo, t: "Pendiente de confirmar" } : p.fecha === hoy ? { c: C.amarillo, t: "Es hoy" } : { c: C.accent, t: "Programada" };
-                const tn = p.tn != null ? p.tn : (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
+                const tn = (parseFloat(p.bateas) || 0) * cfg.tnPorBatea;
                 return (
                   <div key={p.id} style={{ border: `1px solid ${C.line}`, borderLeft: `4px solid ${estado.c}`, borderRadius: 12, padding: "14px 16px", display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
                     <div style={{ minWidth: 180 }}>
@@ -1359,12 +761,12 @@ export default function App() {
                         <span className="pill" style={{ background: `${estado.c}1a`, color: estado.c }}>{estado.t}</span>
                       </div>
                       <div style={{ fontWeight: 600, fontSize: 14.5 }}>{p.cliente}</div>
-                      <div className="num" style={{ fontSize: 12.5, color: C.ink2, marginTop: 2 }}>{p.bateas} batea(s) · {p.modo} · {N(tn)} tn · {$(p.precioTn != null ? p.precioTn : (p.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta))}/tn{p.patente ? ` · ${p.patente}` : ""}</div>
+                      <div className="num" style={{ fontSize: 12.5, color: C.ink2, marginTop: 2 }}>{p.bateas} batea(s) · {p.modo} · {N(tn)} tn</div>
                       {p.nota && <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 4, fontStyle: "italic" }}>“{p.nota}”</div>}
                     </div>
                     <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
                       <button className="tog" onClick={() => enviarOperario(p)}>Enviar al palero</button>
-                      <button className="tog" style={{ background: C.verde, color: "#fff", borderColor: C.verde }} onClick={() => prepararDesdeProg(p)}>Se hizo →</button>
+                      <button className="tog" style={{ background: C.verde, color: "#fff", borderColor: C.verde }} onClick={() => registrarProgramada(p)}>Se hizo → registrar</button>
                       <button className="tog" onClick={() => descartarProgramada(p.id)}>No se hizo</button>
                     </div>
                   </div>
@@ -1376,7 +778,7 @@ export default function App() {
 
         {/* REGISTRO DE CARGAS */}
         <Section tag="Operación" title="Registro de cargas">
-          <div id="formCarga" className="grid-form" style={{ marginBottom: 20 }}>
+          <div className="grid-form" style={{ marginBottom: 20 }}>
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Fecha</span>
               <div className="inputWrap">
@@ -1386,14 +788,12 @@ export default function App() {
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Modo</span>
               <div className="inputWrap selectWrap">
-                <select className="input" value={fModo} onChange={(e) => { const m = e.target.value; setFModo(m); setFPrecio(String(m === "grillada" ? cfg.precioGrillada : cfg.precioBruta)); }}>
+                <select className="input" value={fModo} onChange={(e) => setFModo(e.target.value)}>
                   <option value="bruta">Bruta</option><option value="grillada">Grillada</option>
                 </select>
               </div>
             </label>
-            <Field label="Bateas" value={fBateas} onChange={setBateasReg} />
-            <Field label="Toneladas" value={fTn} onChange={setFTn} suffix="tn" />
-            <Field label="Precio/tn" value={fPrecio} onChange={setFPrecio} suffix="$" />
+            <Field label="Bateas" value={fBateas} onChange={setFBateas} />
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cliente</span>
               <div className="inputWrap selectWrap">
@@ -1407,39 +807,11 @@ export default function App() {
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
               <div className="inputWrap selectWrap">
                 <select className="input" value={fCanal} onChange={(e) => setFCanal(e.target.value)}>
-                  <option value="Socios">Socios (descuenta comisión)</option><option value="Directo">Directo (precio entero para mí)</option>
+                  <option>Socios</option><option>Directo</option>
                 </select>
               </div>
             </label>
-            <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Patente</span>
-              <div className="inputWrap">
-                <input className="input" style={{ fontFamily: "Archivo, sans-serif", textTransform: "uppercase" }} value={fPatente} placeholder="ABC 123" onChange={(e) => setFPatente(e.target.value.toUpperCase())} />
-              </div>
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", paddingTop: 22 }}>
-              <input type="checkbox" checked={fTraenEquipo} onChange={(e) => setFTraenEquipo(e.target.checked)} style={{ width: 18, height: 18, accentColor: C.accent, flexShrink: 0 }} />
-              <span style={{ fontSize: 13, color: fTraenEquipo ? C.accent : C.ink2, fontWeight: fTraenEquipo ? 700 : 400, lineHeight: 1.3 }}>Traen su equipo<br/><span style={{ fontWeight: 400, fontSize: 12 }}>(sin costo operativo)</span></span>
-            </label>
           </div>
-          {fFromProg && (
-            <div style={{ background: `${C.amarillo}12`, borderLeft: `4px solid ${C.amarillo}`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: C.ink2 }}>
-              Viene de una carga programada. Revisá las <b>toneladas reales</b> (por si vino una batea más chica) y tocá Registrar.
-            </div>
-          )}
-          {editingRegId && (() => {
-            const r = registros.find((x) => x.id === editingRegId);
-            return r ? (
-              <div style={{ background: `${C.amarillo}12`, border: `1px solid ${C.amarillo}`, borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
-                <div className="label" style={{ marginBottom: 8 }}>Editar precio — {r.cliente} · {fechaCorta(r.fecha)}</div>
-                <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-                  <Field label="Precio/tn" value={editPrecio} onChange={setEditPrecio} suffix="$" />
-                  <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={() => guardarEditPrecio(editingRegId)}>Guardar</button>
-                  <button className="tog" onClick={() => { setEditingRegId(null); setEditPrecio(""); }}>Cancelar</button>
-                </div>
-              </div>
-            ) : null;
-          })()}
           <button className="btn" style={{ marginBottom: 18 }} onClick={registrar}>+ Registrar carga</button>
 
           {registros.length === 0 ? (
@@ -1447,25 +819,20 @@ export default function App() {
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table className="reg">
-                <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>$/tn</th><th>Cliente</th><th>Patente</th><th>Canal</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>Cliente</th><th>Canal</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
                 <tbody>
                   {registros.map((r) => {
-                    const c = calcDia(cfg, r.modo, regTn(r), regPrecio(r), r.canal === "Directo" ? 0 : cfg.comisionSocios, r.traenEquipo || false);
+                    const c = econDe(r);
                     return (
                       <tr key={r.id}>
                         <td data-label="Fecha" className="num" style={{ fontSize: 12.5 }}>{r.fecha}</td>
                         <td data-label="Modo"><span className="pill" style={{ background: r.modo === "grillada" ? `${C.accent}1a` : `${C.ink}0d`, color: r.modo === "grillada" ? C.accent : C.ink }}>{r.modo}</span></td>
                         <td data-label="Bateas" className="num">{r.bateas}</td>
                         <td data-label="Tn" className="num">{N(c.tn)}</td>
-                        <td data-label="$/tn" className="num" style={{ fontSize: 12.5, color: r.precioTn == null ? C.amarillo : C.ink }}>{r.precioTn != null ? $(r.precioTn) : "A definir"}</td>
                         <td data-label="Cliente">{r.cliente}</td>
-                        <td data-label="Patente" className="num" style={{ fontSize: 12.5 }}>{r.patente || "—"}</td>
                         <td data-label="Canal"><span className="pill" style={{ background: r.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: r.canal === "Directo" ? C.verde : C.amarillo }}>{r.canal}</span></td>
                         <td data-label="Margen" className="num" style={{ textAlign: "right", color: c.margen >= 0 ? C.verde : C.rojo }}>{$(c.margen)}</td>
-                        <td data-label="" style={{ textAlign: "right" }}>
-                          <button className="del" style={{ marginRight: 6, color: C.accent }} title="Editar precio" onClick={() => { setEditingRegId(r.id); setEditPrecio(r.precioTn != null ? String(r.precioTn) : ""); }}>✎</button>
-                          <button className="del" onClick={() => borrar(r.id)}>×</button>
-                        </td>
+                        <td data-label="" style={{ textAlign: "right" }}><button className="del" onClick={() => borrar(r.id)}>×</button></td>
                       </tr>
                     );
                   })}
@@ -1475,106 +842,14 @@ export default function App() {
           )}
         </Section>
 
-        {/* RESULTADO NETO DEL MES */}
-        {mesActivo && (() => {
-          const m = resumenMeses.find((x) => x.key === mesActivo);
-          if (!m) return null;
-          const neto = m.margen - totalFijos;
-          const cubierto = m.margen >= totalFijos;
-          const tnFaltantes = totalFijos > 0 && !cubierto && m.tn > 0 ? ((totalFijos - m.margen) / (m.margen / m.tn)) : 0;
-          return (
-            <Section tag="Resultado" title={`Cierre real — ${mesLabel(mesActivo)}`}>
-              <div className="grid-3" style={{ marginBottom: 16 }}>
-                <Kpi label="Margen operativo" value={$(m.margen)} sub="ventas − socios − op." color={C.accent} />
-                {totalFijos > 0 && <Kpi label="Gastos fijos" value={$(totalFijos)} sub="por mes" color={C.rojo} />}
-                <Kpi label="Resultado neto real" value={$(neto)} sub={cubierto ? "✓ cubriste los fijos" : "sin cubrir fijos aún"} color={neto >= 0 ? C.verde : C.rojo} />
-              </div>
-              {totalFijos > 0 && (
-                <div style={{ background: cubierto ? `${C.verde}0f` : `${C.rojo}0f`, border: `1px solid ${cubierto ? C.verde : C.rojo}33`, borderRadius: 12, padding: "12px 16px", fontSize: 13 }}>
-                  {cubierto
-                    ? <><span style={{ color: C.verde, fontWeight: 700 }}>✓ Fijos cubiertos.</span> Te sobran <b>{$(neto)}</b> después de gastos fijos este mes.</>
-                    : <><span style={{ color: C.rojo, fontWeight: 700 }}>⚠ Faltan {$(totalFijos - m.margen)} para cubrir los fijos.</span> Necesitás vender aprox. <b>{N(tnFaltantes)} tn más</b> este mes.</>
-                  }
-                </div>
-              )}
-            </Section>
-          );
-        })()}
-
         {/* RESUMEN POR MES */}
         <Section tag="Resumen" title="Mes por mes">
           {resumenMeses.length === 0 ? (
             <div style={{ color: C.ink2, fontSize: 14, padding: "8px 0" }}>El resumen se arma solo a medida que registrás cargas.</div>
           ) : (
-            <>
-              <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 14, marginBottom: 18 }}>
-                <div className="label" style={{ marginBottom: 10 }}>Resumen total del mes</div>
-                <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                  <div className="inputWrap selectWrap" style={{ flex: "1 1 160px" }}>
-                    <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={mesActivo} onChange={(e) => { setMesSel(e.target.value); setClienteSel(""); }}>
-                      {resumenMeses.map((m) => <option key={m.key} value={m.key}>{mesLabel(m.key)}</option>)}
-                    </select>
-                  </div>
-                  <button className="tog" onClick={compartirImagen}>Compartir</button>
-                  <button className="tog" onClick={descargarImagen}>Descargar</button>
-                  <button className="tog" onClick={pdfResumen}>PDF</button>
-                  <button className="tog" onClick={exportarResumenCSV}>CSV</button>
-                </div>
-                {resumenPorCliente.length > 0 && (
-                  <>
-                    <div className="label" style={{ marginTop: 14, marginBottom: 8 }}>Liquidación por cliente</div>
-                    <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                      <div className="inputWrap selectWrap" style={{ flex: "1 1 160px" }}>
-                        <select className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={clienteSel} onChange={(e) => setClienteSel(e.target.value)}>
-                          <option value="">Elegí cliente…</option>
-                          {resumenPorCliente.map((c) => <option key={c.clienteId || c.nombre} value={c.clienteId || c.nombre}>{c.nombre} — {N(c.tn)} tn</option>)}
-                        </select>
-                      </div>
-                      <button className="tog" disabled={!clienteSel} onClick={compartirImagenCliente}>Compartir</button>
-                      <button className="tog" disabled={!clienteSel} onClick={descargarImagenCliente}>Descargar</button>
-                      <button className="tog" disabled={!clienteSel} onClick={exportarClienteCSV}>CSV</button>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Tabla por cliente del mes seleccionado */}
-              {resumenPorCliente.length > 0 && (
-                <div style={{ marginBottom: 18 }}>
-                  <div className="label" style={{ marginBottom: 10 }}>Desglose por cliente — {mesLabel(mesActivo)}</div>
-                  {resumenPorCliente.map((cl) => (
-                    <div key={cl.clienteId || cl.nombre} style={{ border: `1px solid ${C.line}`, borderRadius: 12, marginBottom: 10, overflow: "hidden" }}>
-                      <div style={{ background: C.panel, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                        <span style={{ fontWeight: 700, fontSize: 15 }}>{cl.nombre}</span>
-                        <div className="row" style={{ gap: 16 }}>
-                          <span className="num" style={{ fontSize: 13, color: C.ink2 }}>{N(cl.tn)} tn · {cl.cargas.length} carga(s)</span>
-                          <span className="num" style={{ fontSize: 15, color: cl.pendiente ? C.amarillo : C.verde, fontWeight: 700 }}>{cl.pendiente ? `$${N(cl.ingreso)} + pend.` : $(cl.ingreso)}</span>
-                        </div>
-                      </div>
-                      <div style={{ overflowX: "auto" }}>
-                        <table className="reg" style={{ fontSize: 13 }}>
-                          <thead><tr><th>Fecha</th><th>Modo</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>$/tn</th><th style={{ textAlign: "right" }}>Subtotal</th></tr></thead>
-                          <tbody>
-                            {cl.cargas.map((c, i) => (
-                              <tr key={i}>
-                                <td data-label="Fecha" className="num" style={{ fontSize: 12 }}>{fechaCorta(c.fecha)}</td>
-                                <td data-label="Modo"><span className="pill" style={{ background: c.modo === "grillada" ? `${C.accent}1a` : `${C.ink}0d`, color: c.modo === "grillada" ? C.accent : C.ink }}>{c.modo}</span></td>
-                                <td data-label="Tn" className="num" style={{ textAlign: "right" }}>{N(c.tn)}</td>
-                                <td data-label="$/tn" className="num" style={{ textAlign: "right", color: c.precioTn == null ? C.amarillo : C.ink }}>{c.precioTn != null ? $(c.precioTn) : "A definir"}</td>
-                                <td data-label="Subtotal" className="num" style={{ textAlign: "right", color: c.ingreso != null ? C.verde : C.ink2 }}>{c.ingreso != null ? $(c.ingreso) : "—"}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div style={{ overflowX: "auto" }}>
-                <table className="reg">
-                  <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Bateas</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Ingreso bruto</th><th style={{ textAlign: "right" }}>Para socios</th><th style={{ textAlign: "right" }}>Para mí</th></tr></thead>
+            <div style={{ overflowX: "auto" }}>
+              <table className="reg">
+                <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Bateas</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Ingreso</th><th style={{ textAlign: "right" }}>Socios</th><th style={{ textAlign: "right" }}>Margen</th></tr></thead>
                 <tbody>
                   {resumenMeses.map((m) => (
                     <tr key={m.key}>
@@ -1589,7 +864,6 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-            </>
           )}
         </Section>
 
@@ -1650,24 +924,76 @@ export default function App() {
         </Section>
 
         {/* PROYECCIÓN */}
-        <Section tag="Proyección" title={`${cfg.objetivoBruta} bruta + ${cfg.objetivoGrillada} grillada por mes`}>
+        <Section tag="Proyección" title={`Si cargás ${cfg.objetivoSemana} bateas/semana (${modo})`}>
           <div className="grid-3">
-            <Kpi label="Bruta (mes)" value={$(proyB.margen)} sub={`${cfg.objetivoBruta} bat · ${N(proyB.tn)} tn`} color="#2563eb" />
-            <Kpi label="Grillada (mes)" value={$(proyG.margen)} sub={`${cfg.objetivoGrillada} bat · ${N(proyG.tn)} tn`} color="#7c3aed" />
-            <Kpi label="Total del mes" value={$(proyMes)} sub={`${proyTotalBat} bateas en total`} color={C.verde} />
-          </div>
-          <div className="grid-3" style={{ marginTop: 12 }}>
-            <Kpi label="Por año" value={$(proyAnio)} sub="12 meses" color={C.accent} />
-            <Kpi label="Bruta — por batea" value={$(cfg.objetivoBruta ? proyB.margen / cfg.objetivoBruta : 0)} sub="margen" color="#2563eb" />
-            <Kpi label="Grillada — por batea" value={$(cfg.objetivoGrillada ? proyG.margen / cfg.objetivoGrillada : 0)} sub="margen" color="#7c3aed" />
+            <Kpi label="Por semana" value={$(proySem)} sub="margen de contribución" color={C.accent} />
+            <Kpi label="Por mes" value={$(proyMes)} sub="≈ 4,33 semanas" color={C.accent} />
+            <Kpi label="Por año" value={$(proyAnio)} sub="52 semanas" color={C.accent} />
           </div>
         </Section>
 
+        {/* CONFIGURACIÓN */}
+        {showCfg && (
+          <Section tag="Parámetros" title="Supuestos editables"
+            right={<button className="tog" onClick={() => setCfgDraft({ ...DEFAULTS })}>Restablecer</button>}>
+            <div className="grid-3" style={{ rowGap: 16 }}>
+              <Field label="Precio bruta" value={cfgDraft.precioBruta} onChange={setD("precioBruta")} suffix="$/tn" step={100} />
+              <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" step={100} />
+              <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
+              <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
+              <Field label="Objetivo semanal" value={cfgDraft.objetivoSemana} onChange={setD("objetivoSemana")} suffix="bateas" />
+              <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
+              <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
+              <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" step={0.5} />
+              <Field label="Reserva pala" value={cfgDraft.palaReserva} onChange={setD("palaReserva")} suffix="$/h" step={500} />
+              <Field label="Jornal" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" step={1000} />
+              <Field label="Horas pala (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" step={0.5} />
+              <Field label="Horas pala (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
+              <Field label="Jornales (bruta)" value={cfgDraft.jornalesBruta} onChange={setD("jornalesBruta")} />
+              <Field label="Jornales (grillada)" value={cfgDraft.jornalesGrillada} onChange={setD("jornalesGrillada")} />
+              <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" step={50000} />
+            </div>
+            <div className="row" style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.line}`, alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <button className="btn" style={{ background: cfgDirty ? C.accent : C.ink2, cursor: cfgDirty ? "pointer" : "default" }} disabled={!cfgDirty} onClick={guardarCfg}>Guardar supuestos</button>
+              {cfgSaved && <span className="num" style={{ fontSize: 13, color: C.verde }}>✓ Guardado</span>}
+              {!cfgSaved && cfgDirty && <span className="num" style={{ fontSize: 13, color: C.amarillo }}>Cambios sin guardar</span>}
+              {!cfgSaved && !cfgDirty && <span style={{ fontSize: 13, color: C.ink2 }}>Los números de toda la app usan estos valores guardados.</span>}
+            </div>
+          </Section>
+        )}
+
+        {/* RESPALDO */}
+        <Section tag="Datos" title="Respaldo"
+          right={<span className="label">{registros.length} cargas · {clientes.length} clientes</span>}>
+          <div style={{ color: C.ink2, fontSize: 13.5, marginBottom: 16, lineHeight: 1.5 }}>
+            Exportá un archivo con todas tus cargas y clientes para tenerlo a salvo (guardalo en el teléfono o mandátelo por WhatsApp). Si cambiás de celular o se borran los datos, lo importás y recuperás todo.
+          </div>
+          <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+            <button className="btn" onClick={exportar}>↓ Exportar respaldo</button>
+            <button className="btn" style={{ background: C.bg, color: C.ink, border: `1px solid ${C.line}` }} onClick={() => document.getElementById("importFile").click()}>↑ Importar respaldo</button>
+            <input id="importFile" type="file" accept="application/json,.json" style={{ display: "none" }} onChange={archivoElegido} />
+          </div>
+
+          {importErr && <div style={{ marginTop: 14, color: C.rojo, fontSize: 13, fontWeight: 600 }}>{importErr}</div>}
+
+          {pendingImport && (
+            <div style={{ marginTop: 14, background: `${C.amarillo}12`, borderLeft: `4px solid ${C.amarillo}`, borderRadius: 10, padding: "14px 16px" }}>
+              <div style={{ fontWeight: 700, fontSize: 14.5 }}>¿Reemplazar los datos actuales?</div>
+              <div style={{ fontSize: 13, color: C.ink2, margin: "4px 0 12px" }}>
+                El respaldo trae {pendingImport.registros.length} cargas y {(pendingImport.clientes || []).length} clientes. Esto reemplaza lo que tenés ahora en este dispositivo.
+              </div>
+              <div className="row" style={{ gap: 10 }}>
+                <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={confirmarImport}>Confirmar</button>
+                <button className="tog" onClick={() => setPendingImport(null)}>Cancelar</button>
+              </div>
+            </div>
+          )}
+        </Section>
+
         <footer style={{ marginTop: 28, color: C.ink2, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.04em" }}>
-          Los resúmenes se guardan solos mes a mes. Compartí el del mes como imagen o PDF cuando quieras.
+          Los supuestos se aplican al apretar Guardar. Datos guardados en este dispositivo — exportá un respaldo cada tanto.
         </footer>
       </div>
-      )}
     </div>
   );
 }
