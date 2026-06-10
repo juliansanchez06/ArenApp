@@ -2,7 +2,7 @@
 // Deploy: proyecto Vite React -> reemplazá src/App.jsx por este archivo -> push a GitHub -> import en Vercel.
 // Persistencia: localStorage (funciona en Vercel; en la vista previa del chat puede no guardar entre recargas).
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 
 /* ────────────────────────────────────────────────────────────
    SUPUESTOS POR DEFECTO (editables desde la app)
@@ -204,7 +204,41 @@ function Field({ label, value, onChange, suffix }) {
 /* ────────────────────────────────────────────────────────────
    APP
    ──────────────────────────────────────────────────────────── */
+/* ────────────────────────────────────────────────────────────
+   ERROR BOUNDARY — si algo explota al renderizar, mostramos un
+   cartel en vez de dejar la pantalla en blanco. Los datos siguen
+   a salvo en el dispositivo (localStorage).
+   ──────────────────────────────────────────────────────────── */
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { try { console.error("El Retiro – error:", error, info); } catch {} }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, color: C.ink, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "Archivo, sans-serif" }}>
+        <div className="card" style={{ maxWidth: 460, textAlign: "center", boxShadow: `9px 9px 20px ${C.dark}, -9px -9px 20px ${C.light}` }}>
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: C.accent, fontWeight: 600 }}>Ups</div>
+          <h2 style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 22, margin: "10px 0 8px" }}>Algo se trabó</h2>
+          <p style={{ color: C.ink2, fontSize: 14, lineHeight: 1.5, margin: "0 0 18px" }}>
+            Tus datos están guardados en este dispositivo, no se perdieron. Recargá la app para seguir.
+          </p>
+          <button className="btn" onClick={() => window.location.reload()}>Recargar</button>
+        </div>
+      </div>
+    );
+  }
+}
+
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
+  );
+}
+
+function AppInner() {
   const [cfg, setCfg] = useState(() => ({ ...DEFAULTS, ...load("arenera_cfg_v1", {}) }));
   const [registros, setRegistros] = useState(() => load("arenera_reg_v1", []));
   const [clientes, setClientes] = useState(() => load("arenera_cli_v1", []));
@@ -225,6 +259,11 @@ export default function App() {
   const [fBateas, setFBateas] = useState(1);
   const [fClienteId, setFClienteId] = useState("");
   const [fCanal, setFCanal] = useState("Socios");
+  const [editId, setEditId] = useState(null);        // id del registro en edición (null = alta nueva)
+
+  // deshacer borrados (toast)
+  const [undo, setUndo] = useState(null);            // { tipo, item, index, msg }
+  const undoTimer = useRef(null);
 
   // form de programar carga
   const [pFecha, setPFecha] = useState(tomorrowISO());
@@ -380,19 +419,56 @@ export default function App() {
   const proySem = calcDia(cfg, modo, cfg.objetivoSemana).margen;
   const proyMes = proySem * 4.33, proyAnio = proySem * 52;
 
+  function resetFormCarga() {
+    setEditId(null); setFFecha(todayISO()); setFModo("bruta");
+    setFBateas(1); setFClienteId(""); setFCanal("Socios");
+  }
   function registrar() {
     const b = parseFloat(fBateas) || 0;
     if (b <= 0 || !fClienteId) return;
     const cl = clientes.find((c) => String(c.id) === String(fClienteId));
-    setRegistros((rs) => [
-      { id: newId(), fecha: fFecha, modo: fModo, bateas: b,
-        clienteId: fClienteId, cliente: cl ? cl.nombre : "—", canal: fCanal,
-        econ: calcDia(cfg, fModo, b) },
-      ...rs,
-    ]);
-    setFBateas(1);
+    const datos = {
+      fecha: fFecha, modo: fModo, bateas: b,
+      clienteId: fClienteId, cliente: cl ? cl.nombre : "—", canal: fCanal,
+      econ: calcDia(cfg, fModo, b),
+    };
+    if (editId) {
+      // edición: actualiza en su lugar y vuelve a modo alta
+      setRegistros((rs) => rs.map((r) => (r.id === editId ? { ...r, ...datos } : r)));
+      resetFormCarga();
+    } else {
+      setRegistros((rs) => [{ id: newId(), ...datos }, ...rs]);
+      setFBateas(1);
+    }
   }
-  function borrar(id) { setRegistros((rs) => rs.filter((r) => r.id !== id)); }
+  function editar(r) {
+    setEditId(r.id);
+    setFFecha(r.fecha); setFModo(r.modo); setFBateas(r.bateas);
+    setFClienteId(r.clienteId || ""); setFCanal(r.canal || "Socios");
+    try { document.getElementById("form-registro")?.scrollIntoView({ behavior: "smooth", block: "center" }); } catch {}
+  }
+  // borrado con deshacer: saca el item y arma el toast; si no se deshace en 6s, queda firme
+  function armarUndo(tipo, item, index, msg) {
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setUndo({ tipo, item, index, msg });
+    undoTimer.current = setTimeout(() => setUndo(null), 6000);
+  }
+  function borrar(id) {
+    const idx = registros.findIndex((r) => r.id === id);
+    if (idx < 0) return;
+    const item = registros[idx];
+    setRegistros((rs) => rs.filter((r) => r.id !== id));
+    if (editId === id) resetFormCarga();
+    armarUndo("registro", item, idx, "Carga eliminada");
+  }
+  function deshacer() {
+    if (!undo) return;
+    const { tipo, item, index } = undo;
+    if (tipo === "registro") setRegistros((rs) => { const a = [...rs]; a.splice(Math.min(index, a.length), 0, item); return a; });
+    if (tipo === "cliente") setClientes((cs) => { const a = [...cs]; a.splice(Math.min(index, a.length), 0, item); return a; });
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setUndo(null);
+  }
 
   function programar() {
     const b = parseFloat(pBateas) || 0;
@@ -441,7 +517,13 @@ export default function App() {
     ]);
     setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios");
   }
-  function borrarCliente(id) { setClientes((cs) => cs.filter((c) => c.id !== id)); }
+  function borrarCliente(id) {
+    const idx = clientes.findIndex((c) => c.id === id);
+    if (idx < 0) return;
+    const item = clientes[idx];
+    setClientes((cs) => cs.filter((c) => c.id !== id));
+    armarUndo("cliente", item, idx, "Cliente eliminado");
+  }
 
   function elegirCliente(id) {
     setFClienteId(id);
@@ -462,6 +544,61 @@ export default function App() {
     } catch { setImportErr("No se pudo exportar en este navegador."); }
   }
 
+  // Saneo del respaldo: descarta lo que esté roto en vez de meter NaN a los totales.
+  function sanitizarRegistros(arr) {
+    const ok = []; let descartados = 0;
+    for (const r of Array.isArray(arr) ? arr : []) {
+      const b = parseFloat(r && r.bateas);
+      const fechaOk = r && typeof r.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.fecha);
+      const modoOk = r && (r.modo === "bruta" || r.modo === "grillada");
+      if (fechaOk && modoOk && b > 0) {
+        ok.push({
+          id: (r.id !== undefined && r.id !== null) ? r.id : newId(),
+          fecha: r.fecha, modo: r.modo, bateas: b,
+          clienteId: r.clienteId != null ? r.clienteId : "",
+          cliente: typeof r.cliente === "string" && r.cliente ? r.cliente : "—",
+          canal: r.canal === "Directo" ? "Directo" : "Socios",
+          econ: r.econ && typeof r.econ === "object" ? r.econ : undefined,
+        });
+      } else descartados++;
+    }
+    return { ok, descartados };
+  }
+  function sanitizarClientes(arr) {
+    const ok = []; let descartados = 0;
+    for (const c of Array.isArray(arr) ? arr : []) {
+      if (c && typeof c.nombre === "string" && c.nombre.trim()) {
+        ok.push({
+          id: (c.id !== undefined && c.id !== null) ? c.id : newId(),
+          nombre: c.nombre.trim(),
+          localidad: typeof c.localidad === "string" ? c.localidad : "",
+          tel: typeof c.tel === "string" ? c.tel : "",
+          canal: c.canal === "Directo" ? "Directo" : "Socios",
+        });
+      } else descartados++;
+    }
+    return { ok, descartados };
+  }
+  function sanitizarProgramadas(arr) {
+    const ok = [];
+    for (const p of Array.isArray(arr) ? arr : []) {
+      const b = parseFloat(p && p.bateas);
+      const fechaOk = p && typeof p.fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.fecha);
+      if (fechaOk && b > 0) {
+        ok.push({
+          id: (p.id !== undefined && p.id !== null) ? p.id : newId(),
+          fecha: p.fecha, bateas: b,
+          modo: p.modo === "grillada" ? "grillada" : "bruta",
+          clienteId: p.clienteId != null ? p.clienteId : "",
+          cliente: typeof p.cliente === "string" && p.cliente ? p.cliente : "—",
+          canal: p.canal === "Directo" ? "Directo" : "Socios",
+          nota: typeof p.nota === "string" ? p.nota : "",
+        });
+      }
+    }
+    return { ok };
+  }
+
   function archivoElegido(e) {
     setImportErr("");
     const file = e.target.files && e.target.files[0];
@@ -471,7 +608,14 @@ export default function App() {
       try {
         const data = JSON.parse(reader.result);
         if (!data || !Array.isArray(data.registros)) throw new Error();
-        setPendingImport(data);
+        const reg = sanitizarRegistros(data.registros);
+        const cli = sanitizarClientes(data.clientes);
+        const prog = sanitizarProgramadas(data.programadas);
+        setPendingImport({
+          cfg: data.cfg && typeof data.cfg === "object" ? data.cfg : null,
+          registros: reg.ok, clientes: cli.ok, programadas: prog.ok,
+          descartados: reg.descartados + cli.descartados,
+        });
       } catch { setImportErr("El archivo no es un respaldo válido de El Retiro."); }
     };
     reader.onerror = () => setImportErr("No se pudo leer el archivo.");
@@ -482,9 +626,9 @@ export default function App() {
   function confirmarImport() {
     if (!pendingImport) return;
     if (pendingImport.cfg) { const nc = { ...DEFAULTS, ...pendingImport.cfg }; setCfg(nc); setCfgDraft(nc); }
-    setRegistros(Array.isArray(pendingImport.registros) ? pendingImport.registros : []);
-    setClientes(Array.isArray(pendingImport.clientes) ? pendingImport.clientes : []);
-    setProgramadas(Array.isArray(pendingImport.programadas) ? pendingImport.programadas : []);
+    setRegistros(pendingImport.registros);
+    setClientes(pendingImport.clientes);
+    setProgramadas(pendingImport.programadas);
     setPendingImport(null);
   }
 
@@ -802,8 +946,9 @@ export default function App() {
         </Section>
 
         {/* REGISTRO DE CARGAS */}
-        <Section tag="Operación" title="Registro de cargas">
-          <div className="grid-form" style={{ marginBottom: 20 }}>
+        <Section tag="Operación" title={editId ? "Editar carga" : "Registro de cargas"}
+          right={editId ? <span className="pill" style={{ background: `${C.accent}1a`, color: C.accent }}>Editando</span> : null}>
+          <div id="form-registro" className="grid-form" style={{ marginBottom: 20 }}>
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Fecha</span>
               <div className="inputWrap">
@@ -837,7 +982,10 @@ export default function App() {
               </div>
             </label>
           </div>
-          <button className="btn" style={{ marginBottom: 18 }} onClick={registrar}>+ Registrar carga</button>
+          <div className="row" style={{ marginBottom: 18, gap: 10, flexWrap: "wrap" }}>
+            <button className="btn" onClick={registrar}>{editId ? "Guardar cambios" : "+ Registrar carga"}</button>
+            {editId && <button className="tog" onClick={resetFormCarga}>Cancelar</button>}
+          </div>
 
           {registros.length === 0 ? (
             <div style={{ color: C.ink2, fontSize: 14, padding: "16px 0" }}>Todavía no cargaste ninguna operación. Registrá la primera arriba.</div>
@@ -857,7 +1005,10 @@ export default function App() {
                         <td data-label="Cliente">{r.cliente}</td>
                         <td data-label="Canal"><span className="pill" style={{ background: r.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: r.canal === "Directo" ? C.verde : C.amarillo }}>{r.canal}</span></td>
                         <td data-label="Margen" className="num" style={{ textAlign: "right", color: c.margen >= 0 ? C.verde : C.rojo }}>{$(c.margen)}</td>
-                        <td data-label="" style={{ textAlign: "right" }}><button className="del" onClick={() => borrar(r.id)}>×</button></td>
+                        <td data-label="" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button className="del" title="Editar" aria-label="Editar carga" style={{ marginRight: 4, color: r.id === editId ? C.accent : undefined }} onClick={() => editar(r)}>✎</button>
+                          <button className="del" title="Eliminar" aria-label="Eliminar carga" onClick={() => borrar(r.id)}>×</button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -1006,6 +1157,11 @@ export default function App() {
               <div style={{ fontWeight: 700, fontSize: 14.5 }}>¿Reemplazar los datos actuales?</div>
               <div style={{ fontSize: 13, color: C.ink2, margin: "4px 0 12px" }}>
                 El respaldo trae {pendingImport.registros.length} cargas y {(pendingImport.clientes || []).length} clientes. Esto reemplaza lo que tenés ahora en este dispositivo.
+                {pendingImport.descartados > 0 && (
+                  <span style={{ display: "block", marginTop: 6, color: C.rojo, fontWeight: 600 }}>
+                    Se ignoraron {pendingImport.descartados} registro(s) con datos inválidos.
+                  </span>
+                )}
               </div>
               <div className="row" style={{ gap: 10 }}>
                 <button className="btn" style={{ background: C.accent, width: "auto" }} onClick={confirmarImport}>Confirmar</button>
@@ -1019,6 +1175,19 @@ export default function App() {
           Los supuestos se aplican al apretar Guardar. Datos guardados en este dispositivo — exportá un respaldo cada tanto.
         </footer>
       </div>
+
+      {/* TOAST DESHACER */}
+      {undo && (
+        <div role="status" aria-live="polite" style={{
+          position: "fixed", left: "50%", bottom: 22, transform: "translateX(-50%)", zIndex: 60,
+          display: "flex", alignItems: "center", gap: 16, maxWidth: "calc(100vw - 32px)",
+          background: C.bg, borderRadius: 14, padding: "12px 16px",
+          boxShadow: `6px 6px 14px ${C.dark}, -6px -6px 14px ${C.light}`,
+        }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: C.ink }}>{undo.msg}</span>
+          <button className="tog" style={{ padding: "8px 14px" }} onClick={deshacer}>Deshacer</button>
+        </div>
+      )}
     </div>
   );
 }
