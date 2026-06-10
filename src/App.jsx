@@ -366,12 +366,19 @@ function AppInner({ user }) {
         const regL = Array.isArray(d.registros) ? d.registros : [];
         const cliL = Array.isArray(d.clientes) ? d.clientes : [];
         const progL = Array.isArray(d.programadas) ? d.programadas : [];
+        // Plan de la calculadora: si está guardado lo usamos; si no, arranca en el objetivo mensual.
+        const planB = d.plan && typeof d.plan.bruta === "number" ? d.plan.bruta : cfgL.objetivoBrutaMes;
+        const planG = d.plan && typeof d.plan.grillada === "number" ? d.plan.grillada : cfgL.objetivoGrilladaMes;
         setCfg(cfgL);
-        if (!hydrated.current) setCfgDraft(cfgL); // no pisar una edición en curso de supuestos
+        if (!hydrated.current) {
+          setCfgDraft(cfgL);        // no pisar una edición en curso de supuestos
+          setQBruta(planB);         // ni el plan que esté tocando en la calculadora
+          setQGrillada(planG);
+        }
         setRegistros(regL);
         setClientes(cliL);
         setProgramadas(progL);
-        lastSync.current = JSON.stringify({ cfg: cfgL, registros: regL, clientes: cliL, programadas: progL });
+        lastSync.current = JSON.stringify({ cfg: cfgL, registros: regL, clientes: cliL, programadas: progL, plan: { bruta: planB, grillada: planG } });
         hydrated.current = true;
       },
       (e) => { try { console.error("Firestore:", e); } catch {} hydrated.current = true; }
@@ -382,17 +389,18 @@ function AppInner({ user }) {
   // 2) Guardar cambios locales (con rebote), solo después de hidratar y solo si cambió algo
   useEffect(() => {
     if (!hydrated.current) return;
-    const json = JSON.stringify({ cfg, registros, clientes, programadas });
+    const estado = { cfg, registros, clientes, programadas, plan: { bruta: qBruta, grillada: qGrillada } };
+    const json = JSON.stringify(estado);
     if (json === lastSync.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       // Firestore NO acepta valores undefined: el clon por JSON los elimina (deja la data limpia).
-      const payload = JSON.parse(JSON.stringify({ cfg, registros, clientes, programadas }));
+      const payload = JSON.parse(JSON.stringify(estado));
       setDoc(doc(db, "paneles", user.uid), payload, { merge: true })
         .then(() => { lastSync.current = json; })
         .catch((e) => { try { console.error("No se pudo guardar:", e); } catch {} });
     }, 600);
-  }, [cfg, registros, clientes, programadas, user.uid]);
+  }, [cfg, registros, clientes, programadas, qBruta, qGrillada, user.uid]);
 
   const setD = (k) => (v) => { setCfgDraft((d) => ({ ...d, [k]: v })); setCfgSaved(false); };
   const normCfg = (obj) => { const o = {}; for (const k in obj) { const v = obj[k]; o[k] = typeof v === "number" ? v : (parseFloat(v) || 0); } return o; };
@@ -408,9 +416,6 @@ function AppInner({ user }) {
   // Economía de un registro: usa el snapshot inmutable guardado al cargar (r.econ).
   // Para registros viejos sin snapshot, cae a recalcular con cfg actual (compatibilidad).
   const econDe = (r) => (r && r.econ ? r.econ : calcDia(cfg, r.modo, r.bateas));
-  // Re-sincronizar el planificador con el objetivo mensual cuando cambia (al hidratar o al editar supuestos)
-  useEffect(() => { setQBruta(cfg.objetivoBrutaMes); }, [cfg.objetivoBrutaMes]);
-  useEffect(() => { setQGrillada(cfg.objetivoGrilladaMes); }, [cfg.objetivoGrilladaMes]);
 
   // Planificador del mes: cálculo por modo a las cantidades elegidas
   const diaB = useMemo(() => calcDia(cfg, "bruta", qBruta), [cfg, qBruta]);
