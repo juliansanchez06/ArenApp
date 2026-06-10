@@ -165,13 +165,29 @@ function Dot({ color }) {
   );
 }
 
-function Section({ tag, title, right, children }) {
+// Cada sección lleva su propio color de acento (mantiene la línea, solo cambia el tono del distintivo).
+const SECTION_COLORS = {
+  "Decisión": "#5a0f1c",     // bordó
+  "Calculadora": "#8a5a14",  // latón
+  "Cartera": "#2f6f63",      // verde azulado
+  "Agenda": "#3f5488",       // azul acero
+  "Operación": "#b0532b",    // terracota
+  "Resumen": "#6a6526",      // oliva
+  "Calendario": "#864f2e",   // tierra
+  "Tablero": "#6d3a66",      // ciruela
+  "Proyección": "#356b41",   // verde
+  "Parámetros": "#4a4540",   // carbón cálido
+  "Datos": "#3f5560",        // pizarra
+};
+
+function Section({ tag, title, right, children, id }) {
+  const col = SECTION_COLORS[tag] || C.accent;
   return (
-    <section className="card">
+    <section className="card" id={id}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 18 }}>
         <div className="row" style={{ gap: 10, alignItems: "center" }}>
-          <span style={{ width: 8, height: 8, background: C.accent, display: "inline-block" }} />
-          <span className="label">{tag}</span>
+          <span style={{ width: 9, height: 9, background: col, display: "inline-block", borderRadius: 2 }} />
+          <span className="label" style={{ color: col }}>{tag}</span>
         </div>
         {right}
       </div>
@@ -920,7 +936,7 @@ function AppInner({ user }) {
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
               <div className="row" style={{ gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
+                <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {} } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
                 <button className="tog" onClick={() => signOut(auth)}>Cerrar sesión</button>
               </div>
               {user && user.email && (
@@ -942,6 +958,39 @@ function AppInner({ user }) {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* CONFIGURACIÓN (arriba, al lado del botón) */}
+        {showCfg && (
+          <div style={{ marginBottom: 22 }}>
+          <Section tag="Parámetros" title="Supuestos editables"
+            right={<button className="tog" onClick={() => setCfgDraft({ ...DEFAULTS })}>Restablecer</button>}>
+            <div className="grid-3" style={{ rowGap: 16 }}>
+              <Field label="Precio bruta" value={cfgDraft.precioBruta} onChange={setD("precioBruta")} suffix="$/tn" step={100} />
+              <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" step={100} />
+              <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
+              <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
+              <Field label="Objetivo bruta / mes" value={cfgDraft.objetivoBrutaMes} onChange={setD("objetivoBrutaMes")} suffix="bateas" />
+              <Field label="Objetivo grillada / mes" value={cfgDraft.objetivoGrilladaMes} onChange={setD("objetivoGrilladaMes")} suffix="bateas" />
+              <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
+              <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
+              <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" step={0.5} />
+              <Field label="Reserva pala" value={cfgDraft.palaReserva} onChange={setD("palaReserva")} suffix="$/h" step={500} />
+              <Field label="Jornal" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" step={1000} />
+              <Field label="Horas pala (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" step={0.5} />
+              <Field label="Horas pala (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
+              <Field label="Jornales (bruta)" value={cfgDraft.jornalesBruta} onChange={setD("jornalesBruta")} />
+              <Field label="Jornales (grillada)" value={cfgDraft.jornalesGrillada} onChange={setD("jornalesGrillada")} />
+              <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" step={50000} />
+            </div>
+            <div className="row" style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.line}`, alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <button className="btn" style={{ background: cfgDirty ? C.accent : C.ink2, cursor: cfgDirty ? "pointer" : "default" }} disabled={!cfgDirty} onClick={guardarCfg}>Guardar supuestos</button>
+              {cfgSaved && <span className="num" style={{ fontSize: 13, color: C.verde }}>✓ Guardado</span>}
+              {!cfgSaved && cfgDirty && <span className="num" style={{ fontSize: 13, color: C.amarillo }}>Cambios sin guardar</span>}
+              {!cfgSaved && !cfgDirty && <span style={{ fontSize: 13, color: C.ink2 }}>Los números de toda la app usan estos valores guardados.</span>}
+            </div>
+          </Section>
           </div>
         )}
 
@@ -1306,37 +1355,6 @@ function AppInner({ user }) {
             <Kpi label="Por año" value={$(proyAnio)} sub="52 semanas" color={C.accent} />
           </div>
         </Section>
-
-        {/* CONFIGURACIÓN */}
-        {showCfg && (
-          <Section tag="Parámetros" title="Supuestos editables"
-            right={<button className="tog" onClick={() => setCfgDraft({ ...DEFAULTS })}>Restablecer</button>}>
-            <div className="grid-3" style={{ rowGap: 16 }}>
-              <Field label="Precio bruta" value={cfgDraft.precioBruta} onChange={setD("precioBruta")} suffix="$/tn" step={100} />
-              <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" step={100} />
-              <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
-              <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
-              <Field label="Objetivo bruta / mes" value={cfgDraft.objetivoBrutaMes} onChange={setD("objetivoBrutaMes")} suffix="bateas" />
-              <Field label="Objetivo grillada / mes" value={cfgDraft.objetivoGrilladaMes} onChange={setD("objetivoGrilladaMes")} suffix="bateas" />
-              <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
-              <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
-              <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" step={0.5} />
-              <Field label="Reserva pala" value={cfgDraft.palaReserva} onChange={setD("palaReserva")} suffix="$/h" step={500} />
-              <Field label="Jornal" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" step={1000} />
-              <Field label="Horas pala (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" step={0.5} />
-              <Field label="Horas pala (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
-              <Field label="Jornales (bruta)" value={cfgDraft.jornalesBruta} onChange={setD("jornalesBruta")} />
-              <Field label="Jornales (grillada)" value={cfgDraft.jornalesGrillada} onChange={setD("jornalesGrillada")} />
-              <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" step={50000} />
-            </div>
-            <div className="row" style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.line}`, alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-              <button className="btn" style={{ background: cfgDirty ? C.accent : C.ink2, cursor: cfgDirty ? "pointer" : "default" }} disabled={!cfgDirty} onClick={guardarCfg}>Guardar supuestos</button>
-              {cfgSaved && <span className="num" style={{ fontSize: 13, color: C.verde }}>✓ Guardado</span>}
-              {!cfgSaved && cfgDirty && <span className="num" style={{ fontSize: 13, color: C.amarillo }}>Cambios sin guardar</span>}
-              {!cfgSaved && !cfgDirty && <span style={{ fontSize: 13, color: C.ink2 }}>Los números de toda la app usan estos valores guardados.</span>}
-            </div>
-          </Section>
-        )}
 
         {/* RESPALDO */}
         <Section tag="Datos" title="Respaldo"
