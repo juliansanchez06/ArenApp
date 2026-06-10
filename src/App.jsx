@@ -126,9 +126,9 @@ function startOfWeek(d = new Date()) {
 }
 
 const C = {
-  bg: "#ffffff", panel: "#faf8f4", line: "#e6e2da", ink: "#1a1714",
-  ink2: "#7a736b", accent: "#540c18",
-  verde: "#15803d", amarillo: "#ca8a04", rojo: "#dc2626",
+  bg: "#ffffff", panel: "#f5efe6", line: "#e7e0d4", ink: "#211b17",
+  ink2: "#857a6e", accent: "#5a0f1c", gold: "#a87b3d", cream: "#f1ebe1",
+  verde: "#1d7a47", amarillo: "#bf8a1e", rojo: "#cf3630",
 };
 
 function load(key, fallback) {
@@ -480,50 +480,64 @@ export default function App() {
   }
 
   return (
-    <div style={{ background: C.bg, minHeight: "100vh", color: C.ink }}>
+    <div style={{ background: "transparent", minHeight: "100vh", color: C.ink }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@500;600;700&display=swap');
         * { box-sizing: border-box; }
-        body { margin: 0; }
-        .app { font-family: Archivo, sans-serif; max-width: 1120px; margin: 0 auto; padding: 28px 20px 80px; }
-        .label { font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:${C.ink2}; font-weight:600; }
+        html, body { margin: 0; }
+        body {
+          background-color:${C.cream};
+          background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+          -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+        }
+        .app { font-family: Archivo, sans-serif; max-width: 1120px; margin: 0 auto; padding: 30px 20px 90px; }
+        .label { font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:0.16em; text-transform:uppercase; color:${C.ink2}; font-weight:600; }
         .num { font-family:'IBM Plex Mono',monospace; font-weight:700; font-variant-numeric: tabular-nums; letter-spacing:-0.01em; }
         .row { display:flex; gap:14px; }
-        .card { background:${C.bg}; border:1px solid ${C.line}; border-radius:16px; padding:22px; }
-        .kpi { padding:18px; }
+        .card { background:${C.bg}; border:1px solid ${C.line}; border-radius:14px; padding:24px; box-shadow:0 1px 2px rgba(33,27,23,0.04), 0 10px 30px -16px rgba(33,27,23,0.16); }
+        .kpi { padding:20px 18px 18px; position:relative; overflow:hidden; }
+        .kpi::after { content:''; position:absolute; left:0; top:0; height:3px; width:100%; background:linear-gradient(90deg, ${C.accent} 0%, ${C.gold} 100%); }
         .grid-kpi { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
         .grid-2 { display:grid; grid-template-columns:1.05fr 0.95fr; gap:18px; }
         .grid-3 { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
         .grid-form { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; align-items:end; }
-        .inputWrap { display:flex; align-items:center; border:1px solid ${C.line}; border-radius:10px; background:${C.bg}; overflow:hidden; }
+        .inputWrap { display:flex; align-items:center; border:1px solid ${C.line}; border-radius:10px; background:${C.bg}; overflow:hidden; transition:border-color .15s, box-shadow .15s; }
         .input, select.input { width:100%; border:0; outline:0; padding:11px 12px; font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; color:${C.ink}; background:transparent; }
-        .input:focus-within {}
-        .inputWrap:focus-within { border-color:${C.accent}; box-shadow:0 0 0 3px ${C.accent}1a; }
+        .inputWrap:focus-within { border-color:${C.accent}; box-shadow:0 0 0 3px ${C.accent}1f; }
         select.input { -webkit-appearance:none; appearance:none; cursor:pointer; }
         .selectWrap { position:relative; }
-        .selectWrap::after { content:'▾'; position:absolute; right:12px; top:50%; transform:translateY(-50%); color:${C.ink2}; pointer-events:none; }
-        .btn { font-family:'IBM Plex Mono',monospace; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; font-size:13px; border:0; border-radius:10px; padding:12px 16px; cursor:pointer; background:${C.ink}; color:#fff; }
-        .btn:hover { background:#000; }
-        .tog { font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:0.05em; padding:10px 18px; border:1px solid ${C.line}; background:${C.bg}; color:${C.ink2}; cursor:pointer; }
-        .tog.on { background:${C.accent}; color:#fff; border-color:${C.accent}; }
-        .brk td { padding:7px 0; border-bottom:1px dashed ${C.line}; font-size:14px; }
+        .selectWrap::after { content:'▾'; position:absolute; right:12px; top:50%; transform:translateY(-50%); color:${C.gold}; pointer-events:none; }
+        .btn { font-family:'IBM Plex Mono',monospace; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; font-size:13px; border:0; border-radius:10px; padding:12px 18px; cursor:pointer; background:${C.accent}; color:#fff; box-shadow:0 1px 2px rgba(33,27,23,0.12); transition:background .15s, transform .05s, box-shadow .15s; }
+        .btn:hover { background:#6e1424; box-shadow:0 4px 14px -4px ${C.accent}59; }
+        .btn:active { transform:translateY(1px); }
+        .tog { font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:0.05em; padding:10px 18px; border:1px solid ${C.line}; background:${C.bg}; color:${C.ink2}; cursor:pointer; transition:.15s; }
+        .tog:hover { border-color:${C.accent}; color:${C.ink}; }
+        .tog.on { background:${C.accent}; color:#fff; border-color:${C.accent}; box-shadow:inset 0 0 0 1px ${C.gold}66; }
+        .brk td { padding:8px 0; border-bottom:1px dashed ${C.line}; font-size:14px; }
         .brk td:last-child { text-align:right; }
         table.reg { width:100%; border-collapse:collapse; font-size:13.5px; }
-        table.reg th { text-align:left; font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:0.1em; text-transform:uppercase; color:${C.ink2}; padding:8px 10px; border-bottom:1px solid ${C.line}; font-weight:600; }
-        table.reg td { padding:10px; border-bottom:1px solid ${C.line}; }
-        .pill { font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; padding:3px 8px; border-radius:20px; }
-        .del { border:0; background:transparent; color:${C.ink2}; cursor:pointer; font-size:16px; line-height:1; }
+        table.reg th { text-align:left; font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:0.12em; text-transform:uppercase; color:${C.ink2}; padding:10px; background:${C.panel}; border-bottom:2px solid ${C.line}; font-weight:600; }
+        table.reg th:first-child { border-top-left-radius:8px; }
+        table.reg th:last-child { border-top-right-radius:8px; }
+        table.reg td { padding:11px 10px; border-bottom:1px solid ${C.line}; }
+        table.reg tbody tr { transition:background .12s; }
+        table.reg tbody tr:hover { background:${C.accent}08; }
+        .pill { font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; padding:3px 9px; border-radius:20px; letter-spacing:0.03em; }
+        .del { border:0; background:transparent; color:${C.ink2}; cursor:pointer; font-size:16px; line-height:1; transition:color .15s; }
         .del:hover { color:${C.rojo}; }
-        .navbtn { border:1px solid ${C.line}; background:${C.bg}; color:${C.ink}; cursor:pointer; width:32px; height:32px; border-radius:8px; font-size:18px; line-height:1; }
+        .navbtn { border:1px solid ${C.line}; background:${C.bg}; color:${C.ink}; cursor:pointer; width:32px; height:32px; border-radius:8px; font-size:18px; line-height:1; transition:.15s; }
         .navbtn:hover { border-color:${C.accent}; color:${C.accent}; }
         .cal { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
-        .cal-h { font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:0.06em; text-transform:uppercase; color:${C.ink2}; text-align:center; padding-bottom:2px; }
+        .cal-h { font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:${C.ink2}; text-align:center; padding-bottom:2px; }
         .cal-d { aspect-ratio:1; border:1px solid ${C.line}; border-radius:9px; padding:6px; display:flex; flex-direction:column; justify-content:space-between; overflow:hidden; }
         .cal-d.empty { border:0; }
         .barswrap { overflow-x:auto; }
         .bars { display:flex; align-items:flex-end; gap:10px; height:180px; min-width:100%; padding-top:18px; }
         .bar-col { flex:1; min-width:36px; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; position:relative; }
-        .bar { width:100%; border-radius:6px 6px 0 0; min-height:3px; }
+        .bar { width:100%; border-radius:6px 6px 0 0; min-height:3px; transition:filter .15s; }
+        .bar-col:hover .bar { filter:brightness(1.08); }
+        header.brandhead { position:relative; }
+        header.brandhead::after { content:''; position:absolute; left:0; bottom:-3px; width:128px; height:3px; background:${C.gold}; }
         @media (max-width:860px){
           .grid-kpi{ grid-template-columns:repeat(2,1fr);} .grid-2{ grid-template-columns:1fr;}
           .grid-3{ grid-template-columns:1fr;} .grid-form{ grid-template-columns:1fr 1fr;}
@@ -555,7 +569,7 @@ export default function App() {
 
       <div className="app">
         {/* HEADER */}
-        <header style={{ marginBottom: 24, paddingBottom: 20, borderBottom: `2px solid ${C.ink}` }}>
+        <header className="brandhead" style={{ marginBottom: 26, paddingBottom: 20, borderBottom: `3px solid ${C.accent}` }}>
           <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 14 }}>
             <div>
               {logoOk ? (
@@ -887,7 +901,7 @@ export default function App() {
               return (
                 <div key={day} className="cal-d"
                   title={info ? `${N(info.tn)} tn · ${info.bateas} bateas` : ""}
-                  style={{ background: info ? `rgba(84,12,24,${alpha})` : C.bg, borderColor: info ? C.accent : C.line }}>
+                  style={{ background: info ? `rgba(90,15,28,${alpha})` : C.bg, borderColor: info ? C.accent : C.line }}>
                   <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 12, fontWeight: 600, color: info ? "#fff" : C.ink2 }}>{day}</span>
                   {info && <span style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10.5, fontWeight: 700, color: "#fff", lineHeight: 1.1 }}>{N(info.tn)} tn</span>}
                 </div>
