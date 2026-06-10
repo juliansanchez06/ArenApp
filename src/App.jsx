@@ -3,6 +3,9 @@
 // Persistencia: localStorage (funciona en Vercel; en la vista previa del chat puede no guardar entre recargas).
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { auth, db } from "./firebase";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { doc, onSnapshot, setDoc } from "firebase/firestore";
 
 /* ────────────────────────────────────────────────────────────
    SUPUESTOS POR DEFECTO (editables desde la app)
@@ -221,7 +224,7 @@ class ErrorBoundary extends React.Component {
           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: C.accent, fontWeight: 600 }}>Ups</div>
           <h2 style={{ fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 22, margin: "10px 0 8px" }}>Algo se trabó</h2>
           <p style={{ color: C.ink2, fontSize: 14, lineHeight: 1.5, margin: "0 0 18px" }}>
-            Tus datos están guardados en este dispositivo, no se perdieron. Recargá la app para seguir.
+            Tus datos están a salvo en tu cuenta, no se perdieron. Recargá la app para seguir.
           </p>
           <button className="btn" onClick={() => window.location.reload()}>Recargar</button>
         </div>
@@ -230,19 +233,83 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+/* ────────────────────────────────────────────────────────────
+   AUTENTICACIÓN — login por email/clave (Firebase Auth).
+   No hay registro público: los usuarios los creás vos en la consola.
+   ──────────────────────────────────────────────────────────── */
+function Splash() {
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'IBM Plex Mono',monospace", color: C.ink2, letterSpacing: "0.14em", textTransform: "uppercase", fontSize: 12 }}>
+      Cargando…
+    </div>
+  );
+}
+
+function Login() {
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function entrar(e) {
+    e.preventDefault();
+    setErr(""); setBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), pass);
+    } catch (_) {
+      setErr("Email o contraseña incorrectos.");
+      setBusy(false);
+    }
+  }
+  const inputStyle = { boxSizing: "border-box", width: "100%", border: 0, borderRadius: 13, background: C.bg, padding: "13px 15px", fontFamily: "'IBM Plex Mono',monospace", fontSize: 16, fontWeight: 600, color: C.ink, outline: "none", boxShadow: `inset 3px 3px 6px ${C.dark}, inset -3px -3px 6px ${C.light}` };
+  const labStyle = { display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 7, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: "'IBM Plex Mono',monospace" };
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "Archivo, sans-serif" }}>
+      <form onSubmit={entrar} style={{ width: "100%", maxWidth: 380, background: C.bg, borderRadius: 22, padding: "32px 28px", boxShadow: `9px 9px 20px ${C.dark}, -9px -9px 20px ${C.light}` }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <img src="/logo.png" alt="El Retiro" style={{ width: 170, height: "auto", display: "inline-block", mixBlendMode: "multiply" }} />
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: C.accent, fontWeight: 600, marginTop: 8 }}>Panel de control</div>
+        </div>
+        <label style={{ display: "block", marginBottom: 16 }}>
+          <span style={labStyle}>Email</span>
+          <input style={inputStyle} type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        </label>
+        <label style={{ display: "block", marginBottom: 20 }}>
+          <span style={labStyle}>Contraseña</span>
+          <input style={inputStyle} type="password" autoComplete="current-password" value={pass} onChange={(e) => setPass(e.target.value)} required />
+        </label>
+        {err && <div style={{ color: C.rojo, fontSize: 13, fontWeight: 600, marginBottom: 16, textAlign: "center" }}>{err}</div>}
+        <button type="submit" disabled={busy} style={{ width: "100%", border: 0, borderRadius: 13, padding: "14px", cursor: busy ? "default" : "pointer", background: C.accent, color: "#fff", fontFamily: "'IBM Plex Mono',monospace", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", fontSize: 13, boxShadow: `5px 5px 12px ${C.dark}, -5px -5px 12px ${C.light}`, opacity: busy ? 0.7 : 1 }}>
+          {busy ? "Entrando…" : "Entrar"}
+        </button>
+        <div style={{ textAlign: "center", marginTop: 18, fontSize: 12, color: C.ink2, lineHeight: 1.5 }}>
+          Acceso solo para usuarios autorizados.
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function AuthGate() {
+  const [user, setUser] = useState(undefined); // undefined = cargando · null = sin sesión
+  useEffect(() => onAuthStateChanged(auth, (u) => setUser(u || null)), []);
+  if (user === undefined) return <Splash />;
+  if (!user) return <Login />;
+  return <AppInner user={user} />;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
-      <AppInner />
+      <AuthGate />
     </ErrorBoundary>
   );
 }
 
-function AppInner() {
-  const [cfg, setCfg] = useState(() => ({ ...DEFAULTS, ...load("arenera_cfg_v1", {}) }));
-  const [registros, setRegistros] = useState(() => load("arenera_reg_v1", []));
-  const [clientes, setClientes] = useState(() => load("arenera_cli_v1", []));
-  const [programadas, setProgramadas] = useState(() => load("arenera_prog_v1", []));
+function AppInner({ user }) {
+  const [cfg, setCfg] = useState(() => ({ ...DEFAULTS }));
+  const [registros, setRegistros] = useState([]);
+  const [clientes, setClientes] = useState([]);
+  const [programadas, setProgramadas] = useState([]);
   const [modo, setModo] = useState("bruta");
   const [bateas, setBateas] = useState(DEFAULTS.objetivoSemana);
   const [showCfg, setShowCfg] = useState(false);
@@ -250,7 +317,7 @@ function AppInner() {
   const [cal, setCal] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [importErr, setImportErr] = useState("");
   const [pendingImport, setPendingImport] = useState(null);
-  const [cfgDraft, setCfgDraft] = useState(() => ({ ...DEFAULTS, ...load("arenera_cfg_v1", {}) }));
+  const [cfgDraft, setCfgDraft] = useState(() => ({ ...DEFAULTS }));
   const [cfgSaved, setCfgSaved] = useState(false);
 
   // form de carga
@@ -278,11 +345,48 @@ function AppInner() {
   const [cTel, setCTel] = useState("");
   const [cCanal, setCCanal] = useState("Socios");
 
-  useEffect(() => save("arenera_prog_v1", programadas), [programadas]);
+  // ── Sincronización con Firestore (un documento por usuario) ──
+  const hydrated = useRef(false);   // true cuando ya recibimos los datos del servidor (evita pisar con vacío)
+  const lastSync = useRef("");      // último estado conocido del server (evita bucle de escrituras)
+  const saveTimer = useRef(null);
 
-  useEffect(() => save("arenera_cfg_v1", cfg), [cfg]);
-  useEffect(() => save("arenera_reg_v1", registros), [registros]);
-  useEffect(() => save("arenera_cli_v1", clientes), [clientes]);
+  // 1) Escuchar el panel del usuario en vivo
+  useEffect(() => {
+    hydrated.current = false; lastSync.current = "";
+    const ref = doc(db, "paneles", user.uid);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        const d = snap.data() || {};
+        const cfgL = { ...DEFAULTS, ...(d.cfg || {}) };
+        const regL = Array.isArray(d.registros) ? d.registros : [];
+        const cliL = Array.isArray(d.clientes) ? d.clientes : [];
+        const progL = Array.isArray(d.programadas) ? d.programadas : [];
+        setCfg(cfgL);
+        if (!hydrated.current) setCfgDraft(cfgL); // no pisar una edición en curso de supuestos
+        setRegistros(regL);
+        setClientes(cliL);
+        setProgramadas(progL);
+        lastSync.current = JSON.stringify({ cfg: cfgL, registros: regL, clientes: cliL, programadas: progL });
+        hydrated.current = true;
+      },
+      (e) => { try { console.error("Firestore:", e); } catch {} hydrated.current = true; }
+    );
+    return unsub;
+  }, [user.uid]);
+
+  // 2) Guardar cambios locales (con rebote), solo después de hidratar y solo si cambió algo
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const json = JSON.stringify({ cfg, registros, clientes, programadas });
+    if (json === lastSync.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      setDoc(doc(db, "paneles", user.uid), { cfg, registros, clientes, programadas }, { merge: true })
+        .then(() => { lastSync.current = json; })
+        .catch((e) => { try { console.error("No se pudo guardar:", e); } catch {} });
+    }, 600);
+  }, [cfg, registros, clientes, programadas, user.uid]);
 
   const setD = (k) => (v) => { setCfgDraft((d) => ({ ...d, [k]: v })); setCfgSaved(false); };
   const normCfg = (obj) => { const o = {}; for (const k in obj) { const v = obj[k]; o[k] = typeof v === "number" ? v : (parseFloat(v) || 0); } return o; };
@@ -735,7 +839,15 @@ function AppInner() {
               )}
               <div className="label" style={{ color: C.accent, marginTop: 10 }}>Panel de control · Arenera · Sol de Julio</div>
             </div>
-            <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
+              <div className="row" style={{ gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button className="tog" onClick={() => { if (!showCfg) { setCfgDraft(cfg); setCfgSaved(false); } setShowCfg((s) => !s); }}>{showCfg ? "Ocultar supuestos" : "Editar supuestos"}</button>
+                <button className="tog" onClick={() => signOut(auth)}>Cerrar sesión</button>
+              </div>
+              {user && user.email && (
+                <span className="label" style={{ color: C.ink2, textTransform: "none", letterSpacing: 0 }}>{user.email}</span>
+              )}
+            </div>
           </div>
         </header>
 
@@ -1172,7 +1284,7 @@ function AppInner() {
         </Section>
 
         <footer style={{ marginTop: 28, color: C.ink2, fontSize: 12, fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.04em" }}>
-          Los supuestos se aplican al apretar Guardar. Datos guardados en este dispositivo — exportá un respaldo cada tanto.
+          Los supuestos se aplican al apretar Guardar. Datos guardados en tu cuenta (Firebase) y sincronizados entre tus dispositivos.
         </footer>
       </div>
 
