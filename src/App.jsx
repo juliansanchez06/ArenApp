@@ -403,7 +403,6 @@ function AppInner({ user }) {
     setTimeout(() => setCfgSaved(false), 2500);
   }
 
-  const dia = useMemo(() => calcDia(cfg, modo, bateas), [cfg, modo, bateas]);
   // Economía de un registro: usa el snapshot inmutable guardado al cargar (r.econ).
   // Para registros viejos sin snapshot, cae a recalcular con cfg actual (compatibilidad).
   const econDe = (r) => (r && r.econ ? r.econ : calcDia(cfg, r.modo, r.bateas));
