@@ -519,6 +519,17 @@ function AppInner({ user }) {
   const prObjetivo = prModo === "bruta" ? qBruta : qGrillada;
   const prCobertura = prObjetivo > 0 ? (prBateasNum / prObjetivo) * 100 : 0;
 
+  // Avance del objetivo según las propuestas guardadas (bruta / grillada por separado)
+  const propAgg = useMemo(() => {
+    let bB = 0, bG = 0, mB = 0, mG = 0;
+    for (const p of propuestas) {
+      const b = parseFloat(p.bateas) || 0;
+      const m = p.margen || 0;
+      if (p.modo === "grillada") { bG += b; mG += m; } else { bB += b; mB += m; }
+    }
+    return { bB, bG, mB, mG };
+  }, [propuestas]);
+
   // métricas del mes / semana
   const stats = useMemo(() => {
     const now = new Date(); const m = now.getMonth(), y = now.getFullYear();
@@ -1196,6 +1207,32 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", color: C.ink2, fontSize: 12.5, marginTop: 6 }}>
               <span>{N(totalTnMes)} tn en total</span><span>{qBruta + qGrillada} bateas</span>
+            </div>
+
+            {/* Avance del objetivo según propuestas guardadas */}
+            <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.line}` }}>
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+                <span className="label">Avance · propuestas</span>
+                <span className="num" style={{ fontSize: 13, color: (propAgg.mB + propAgg.mG) >= 0 ? C.verde : C.rojo }}>{$(propAgg.mB + propAgg.mG)}</span>
+              </div>
+              {[{ lab: "Bruta", val: propAgg.bB, obj: qBruta, mar: propAgg.mB }, { lab: "Grillada", val: propAgg.bG, obj: qGrillada, mar: propAgg.mG }].map((x) => {
+                const pct = x.obj > 0 ? Math.min(100, (x.val / x.obj) * 100) : 0;
+                const ok = x.obj > 0 && x.val >= x.obj;
+                return (
+                  <div key={x.lab} style={{ marginBottom: 12 }}>
+                    <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+                      <span style={{ fontSize: 13, color: C.ink }}>{x.lab}: <b className="num">{N(x.val)} / {x.obj}</b> bat</span>
+                      <span className="num" style={{ fontSize: 12.5, color: ok ? C.verde : C.ink2 }}>{ok ? "✓ cumplido" : `${N(pct)}%`}</span>
+                    </div>
+                    <div style={{ height: 9, borderRadius: 6, background: C.bg, boxShadow: `inset 2px 2px 4px ${C.dark}, inset -2px -2px 4px ${C.light}`, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${pct}%`, background: ok ? C.verde : C.accent, borderRadius: 6, transition: "width .2s" }} />
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ fontSize: 12, color: C.ink2, marginTop: 4 }}>
+                {propuestas.length === 0 ? "Guardá propuestas y vas viendo cuánto del objetivo cubrís." : `${propuestas.length} propuesta(s) guardada(s).`}
+              </div>
             </div>
           </Section>
         </div>
