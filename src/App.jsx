@@ -16,7 +16,8 @@ const DEFAULTS = {
   comisionSocios: 30,       // %
   regalia: 3,               // % de boca de mina
   tnPorBatea: 30,           // tn
-  objetivoSemana: 3,        // bateas/semana
+  objetivoBrutaMes: 8,      // bateas/mes de bruta (objetivo)
+  objetivoGrilladaMes: 4,   // bateas/mes de grillada (objetivo)
   gasoilPrecio: 1800,       // $/L
   palaConsumo: 9,           // L/h
   palaReserva: 11400,       // $/h (reparación + amortización pala)
@@ -60,36 +61,39 @@ function calcDia(cfg, modo, bateas) {
   };
 }
 
+// La grilla se desgasta con el volumen GRILLADO: amortizamos sobre las tn de grillada del año.
 function amortGrillaTn(cfg) {
-  const tnVida = cfg.tnPorBatea * cfg.objetivoSemana * 52 * cfg.vidaGrillaAnios;
+  const tnVida = cfg.tnPorBatea * cfg.objetivoGrilladaMes * 12 * cfg.vidaGrillaAnios;
   return tnVida ? cfg.costoGrilla / tnVida : 0;
 }
 
-// neto $/tn de cada modo, a la escala del objetivo semanal
-function netoTn(cfg, modo) {
-  const r = calcDia(cfg, modo, cfg.objetivoSemana);
+// neto $/tn de un modo a una escala de bateas dada (los costos fijos se reparten sobre esas tn)
+function netoTn(cfg, modo, bateas) {
+  const r = calcDia(cfg, modo, bateas || 1);
   return r.margenTn;
 }
 
-// precio de grillada al que EMPATA con bruta (break-even para que valga grillar)
-function breakEvenGrillada(cfg) {
+// precio de grillada al que EMPATA con bruta (break-even para que valga grillar), a las cantidades dadas
+function breakEvenGrillada(cfg, bateasG, bateasB) {
   const factor = 1 - cfg.comisionSocios / 100 - cfg.regalia / 100;
   if (factor <= 0) return Infinity;
-  const tn = cfg.objetivoSemana * cfg.tnPorBatea;
+  const tn = (bateasG || 1) * cfg.tnPorBatea;
+  if (tn <= 0) return Infinity;
   const opG =
     (cfg.horasPalaGrillada * cfg.palaConsumo * cfg.gasoilPrecio +
       cfg.horasPalaGrillada * cfg.palaReserva +
       cfg.jornalesGrillada * cfg.jornal +
       cfg.variosGrillada) / tn + amortGrillaTn(cfg);
-  const netoB = netoTn(cfg, "bruta");
+  const netoB = netoTn(cfg, "bruta", bateasB);
   return (netoB + opG) / factor;
 }
 
-// precio de bruta al que el margen se hace cero (zona de pérdida)
-function breakEvenBruta(cfg) {
+// precio de bruta al que el margen se hace cero (zona de pérdida), a la cantidad dada
+function breakEvenBruta(cfg, bateasB) {
   const factor = 1 - cfg.comisionSocios / 100 - cfg.regalia / 100;
   if (factor <= 0) return Infinity;
-  const tn = cfg.objetivoSemana * cfg.tnPorBatea;
+  const tn = (bateasB || 1) * cfg.tnPorBatea;
+  if (tn <= 0) return Infinity;
   const opB =
     (cfg.horasPalaBruta * cfg.palaConsumo * cfg.gasoilPrecio +
       cfg.horasPalaBruta * cfg.palaReserva +
@@ -310,8 +314,8 @@ function AppInner({ user }) {
   const [registros, setRegistros] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [programadas, setProgramadas] = useState([]);
-  const [modo, setModo] = useState("bruta");
-  const [bateas, setBateas] = useState(DEFAULTS.objetivoSemana);
+  const [qBruta, setQBruta] = useState(DEFAULTS.objetivoBrutaMes);
+  const [qGrillada, setQGrillada] = useState(DEFAULTS.objetivoGrilladaMes);
   const [showCfg, setShowCfg] = useState(false);
   const [logoOk, setLogoOk] = useState(true);
   const [cal, setCal] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
@@ -403,36 +407,49 @@ function AppInner({ user }) {
   // Economía de un registro: usa el snapshot inmutable guardado al cargar (r.econ).
   // Para registros viejos sin snapshot, cae a recalcular con cfg actual (compatibilidad).
   const econDe = (r) => (r && r.econ ? r.econ : calcDia(cfg, r.modo, r.bateas));
-  const beG = useMemo(() => breakEvenGrillada(cfg), [cfg]);
-  const beB = useMemo(() => breakEvenBruta(cfg), [cfg]);
-  const netoB = useMemo(() => netoTn(cfg, "bruta"), [cfg]);
-  const netoG = useMemo(() => netoTn(cfg, "grillada"), [cfg]);
+  // Re-sincronizar el planificador con el objetivo mensual cuando cambia (al hidratar o al editar supuestos)
+  useEffect(() => { setQBruta(cfg.objetivoBrutaMes); }, [cfg.objetivoBrutaMes]);
+  useEffect(() => { setQGrillada(cfg.objetivoGrilladaMes); }, [cfg.objetivoGrilladaMes]);
 
-  // decisión bruta vs grillada
+  // Planificador del mes: cálculo por modo a las cantidades elegidas
+  const diaB = useMemo(() => calcDia(cfg, "bruta", qBruta), [cfg, qBruta]);
+  const diaG = useMemo(() => calcDia(cfg, "grillada", qGrillada), [cfg, qGrillada]);
+  const beG = useMemo(() => breakEvenGrillada(cfg, qGrillada, qBruta), [cfg, qGrillada, qBruta]);
+  const beB = useMemo(() => breakEvenBruta(cfg, qBruta), [cfg, qBruta]);
+  const netoB = diaB.margenTn;
+  const netoG = diaG.margenTn;
+  const totalMargenMes = diaB.margen + diaG.margen;
+  const totalTnMes = diaB.tn + diaG.tn;
+
+  // decisión bruta vs grillada — reacciona a las cantidades y a los precios/costos de supuestos
   const dif = netoG - netoB;
   let dec;
-  if (dif > 100) dec = { color: C.verde, txt: "GRILLÁ", msg: `La grillada deja ${$(dif)}/tn más que la bruta.` };
+  if (dif > 100) dec = { color: C.verde, txt: "CONVIENE GRILLAR", msg: `La grillada deja ${$(dif)}/tn más que la bruta a estas cantidades.` };
   else if (dif >= -100) dec = { color: C.amarillo, txt: "EMPATE → VENDÉ BRUTA", msg: "Casi lo mismo: menos laburo y desgaste yendo en bruta." };
-  else dec = { color: C.rojo, txt: "VENDÉ BRUTA", msg: `Grillar te resta ${$(-dif)}/tn. No conviene a este precio.` };
+  else dec = { color: C.rojo, txt: "VENDÉ BRUTA", msg: `Grillar te resta ${$(-dif)}/tn. No conviene a estos precios.` };
 
   // métricas del mes / semana
   const stats = useMemo(() => {
     const now = new Date(); const m = now.getMonth(), y = now.getFullYear();
     const sow = startOfWeek(now);
-    let tnMes = 0, ingMes = 0, comMes = 0, costoMes = 0, margenMes = 0, tnDir = 0, batSem = 0;
+    let tnMes = 0, ingMes = 0, comMes = 0, costoMes = 0, margenMes = 0, tnDir = 0, batSem = 0, batMes = 0;
     for (const r of registros) {
       const d = new Date(r.fecha + "T00:00:00");
       const calc = econDe(r);
       if (d.getMonth() === m && d.getFullYear() === y) {
         tnMes += calc.tn; ingMes += calc.ingresoBruto; comMes += calc.comision;
         costoMes += calc.costoTotal; margenMes += calc.margen;
+        batMes += (parseFloat(r.bateas) || 0);
         if (r.canal === "Directo") tnDir += calc.tn;
       }
       if (d >= sow) batSem += r.bateas;
     }
-    return { tnMes, ingMes, comMes, costoMes, margenMes, tnDir, batSem,
+    return { tnMes, ingMes, comMes, costoMes, margenMes, tnDir, batSem, batMes,
       pctDir: tnMes ? (tnDir / tnMes) * 100 : 0, costoTn: tnMes ? costoMes / tnMes : 0 };
   }, [registros, cfg]);
+
+  // objetivo mensual total de bateas (bruta + grillada)
+  const objMes = (cfg.objetivoBrutaMes || 0) + (cfg.objetivoGrilladaMes || 0);
 
   // alertas
   const programadasSort = useMemo(
@@ -453,11 +470,11 @@ function AppInner({ user }) {
     alertas.push({ color: C.amarillo, t: "Falta confirmar precio de grillada", d: `Llamá al corralón. Grillar conviene solo desde ~${$(beG)}/tn.` });
   if (stats.tnMes > 0 && stats.pctDir < 20)
     alertas.push({ color: C.amarillo, t: "Dependés de los socios", d: `Solo ${N(stats.pctDir)}% de las ventas del mes son directas. Cada tn directa recupera ${$(cfg.precioBruta * cfg.comisionSocios / 100)}/tn.` });
-  if (stats.batSem >= cfg.objetivoSemana)
-    alertas.push({ color: C.verde, t: "Objetivo semanal cumplido", d: `${stats.batSem} bateas esta semana. Cada batea extra el mismo día deja casi puro margen.` });
+  if (objMes > 0 && stats.batMes >= objMes)
+    alertas.push({ color: C.verde, t: "Objetivo del mes cumplido", d: `${stats.batMes} de ${objMes} bateas este mes. Cada batea extra deja casi puro margen.` });
 
   const semDir = stats.pctDir > 50 ? C.verde : stats.pctDir >= 20 ? C.amarillo : C.rojo;
-  const semBat = stats.batSem >= cfg.objetivoSemana ? C.verde : stats.batSem >= 1 ? C.amarillo : C.rojo;
+  const semBat = objMes > 0 && stats.batMes >= objMes ? C.verde : stats.batMes >= 1 ? C.amarillo : C.rojo;
   const semMar = stats.margenMes > 0 ? C.verde : stats.margenMes < 0 ? C.rojo : C.amarillo;
 
   // historial por cliente (ordenado por margen, mejores arriba)
@@ -519,9 +536,10 @@ function AppInner({ user }) {
     setCal((c) => { let m = c.m + delta, y = c.y; if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; } return { y, m }; });
   }
 
-  // proyección
-  const proySem = calcDia(cfg, modo, cfg.objetivoSemana).margen;
-  const proyMes = proySem * 4.33, proyAnio = proySem * 52;
+  // proyección — sobre el plan mensual (bruta + grillada)
+  const proyMes = totalMargenMes;
+  const proySem = totalMargenMes / 4.33;
+  const proyAnio = totalMargenMes * 12;
 
   function resetFormCarga() {
     setEditId(null); setFFecha(todayISO()); setFModo("bruta");
@@ -646,6 +664,61 @@ function AppInner({ user }) {
       URL.revokeObjectURL(url);
       setImportErr("");
     } catch { setImportErr("No se pudo exportar en este navegador."); }
+  }
+
+  // ── Exportar resúmenes (CSV abrible en Excel) ──
+  // Agrupa las cargas por período y separa bruta/grillada, con tn, ingreso, comisión, costos y margen.
+  function filasResumen(keyFn, labelFn) {
+    const map = {};
+    for (const r of registros) {
+      const key = keyFn(r.fecha);
+      if (!map[key]) map[key] = { key, batB: 0, batG: 0, tnB: 0, tnG: 0, ing: 0, com: 0, costo: 0, margen: 0, tnDir: 0 };
+      const o = map[key];
+      const c = econDe(r);
+      const b = parseFloat(r.bateas) || 0;
+      if (r.modo === "grillada") { o.batG += b; o.tnG += c.tn; } else { o.batB += b; o.tnB += c.tn; }
+      o.ing += c.ingresoBruto; o.com += c.comision; o.costo += c.costoTotal; o.margen += c.margen;
+      if (r.canal === "Directo") o.tnDir += c.tn;
+    }
+    return Object.values(map).sort((a, b) => (a.key < b.key ? 1 : -1)).map((o) => ({ ...o, label: labelFn(o.key) }));
+  }
+  function descargarCSV(nombre, filas) {
+    const sep = ";"; // separador apto para Excel en español
+    const head = ["Período", "Bateas bruta", "Bateas grillada", "Bateas total", "Tn bruta", "Tn grillada", "Tn total", "Ingreso bruto", "Comisión socios", "Costos", "Margen", "Tn directas", "% directas"];
+    const lineas = [head.join(sep)];
+    const tot = { batB: 0, batG: 0, tnB: 0, tnG: 0, ing: 0, com: 0, costo: 0, margen: 0, tnDir: 0 };
+    const fila = (label, f) => {
+      const tnTot = f.tnB + f.tnG; const pct = tnTot ? (f.tnDir / tnTot) * 100 : 0;
+      return [label, Math.round(f.batB), Math.round(f.batG), Math.round(f.batB + f.batG), Math.round(f.tnB), Math.round(f.tnG), Math.round(tnTot), Math.round(f.ing), Math.round(f.com), Math.round(f.costo), Math.round(f.margen), Math.round(f.tnDir), Math.round(pct)].join(sep);
+    };
+    for (const f of filas) {
+      lineas.push(fila(f.label, f));
+      tot.batB += f.batB; tot.batG += f.batG; tot.tnB += f.tnB; tot.tnG += f.tnG;
+      tot.ing += f.ing; tot.com += f.com; tot.costo += f.costo; tot.margen += f.margen; tot.tnDir += f.tnDir;
+    }
+    lineas.push(fila("TOTAL", tot));
+    const csv = "﻿" + lineas.join("\r\n"); // BOM para que Excel respete los acentos
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+  function exportarResumenMensual() {
+    if (!registros.length) { setImportErr("Todavía no hay cargas para exportar."); return; }
+    setImportErr("");
+    descargarCSV(`el-retiro-resumen-mensual-${todayISO()}.csv`, filasResumen((f) => f.slice(0, 7), (k) => mesLabel(k)));
+  }
+  function exportarResumenSemanal() {
+    if (!registros.length) { setImportErr("Todavía no hay cargas para exportar."); return; }
+    setImportErr("");
+    descargarCSV(
+      `el-retiro-resumen-semanal-${todayISO()}.csv`,
+      filasResumen(
+        (f) => localISO(startOfWeek(new Date(f + "T00:00:00"))),
+        (k) => "Semana del " + k.split("-").reverse().join("/")
+      )
+    );
   }
 
   // Saneo del respaldo: descarta lo que esté roto en vez de meter NaN a los totales.
@@ -870,7 +943,7 @@ function AppInner({ user }) {
         <div className="grid-kpi" style={{ marginBottom: 22 }}>
           <Kpi label="Margen del mes" value={$(stats.margenMes)} sub={`${N(stats.tnMes)} tn cargadas`} color={semMar} />
           <Kpi label="Ventas directas" value={`${N(stats.pctDir)}%`} sub="cuanto más alto, más recuperás del 30%" color={semDir} />
-          <Kpi label="Bateas esta semana" value={`${stats.batSem} / ${cfg.objetivoSemana}`} sub="objetivo semanal" color={semBat} />
+          <Kpi label="Bateas este mes" value={`${stats.batMes} / ${objMes}`} sub="objetivo mensual" color={semBat} />
           <Kpi label="Comisión socios (mes)" value={$(stats.comMes)} sub="tu mayor costo" color={C.accent} />
         </div>
 
@@ -887,45 +960,47 @@ function AppInner({ user }) {
             </div>
             <table style={{ width: "100%" }} className="brk">
               <tbody>
-                <tr><td>Neto bruta</td><td className="num">{$(netoB)}/tn</td></tr>
-                <tr><td>Neto grillada</td><td className="num">{$(netoG)}/tn</td></tr>
+                <tr><td>Neto bruta ({qBruta} bat.)</td><td className="num">{$(netoB)}/tn</td></tr>
+                <tr><td>Neto grillada ({qGrillada} bat.)</td><td className="num">{$(netoG)}/tn</td></tr>
                 <tr><td>Precio grillada para empatar</td><td className="num" style={{ color: C.accent }}>{$(beG)}/tn</td></tr>
                 <tr><td>Piso de la bruta (pérdida)</td><td className="num">{$(beB)}/tn</td></tr>
               </tbody>
             </table>
+            <div style={{ fontSize: 12, color: C.ink2, marginTop: 12, lineHeight: 1.5 }}>
+              Movés las cantidades en la calculadora y los precios/costos en “Editar supuestos”: el semáforo se recalcula solo.
+            </div>
           </Section>
 
-          {/* Calculadora del día */}
-          <Section tag="Calculadora" title="Día de carga"
-            right={
-              <div className="row" style={{ gap: 0 }}>
-                <button className={"tog" + (modo === "bruta" ? " on" : "")} style={{ borderRadius: "10px 0 0 10px" }} onClick={() => setModo("bruta")}>Bruta</button>
-                <button className={"tog" + (modo === "grillada" ? " on" : "")} style={{ borderRadius: "0 10px 10px 0", borderLeft: 0 }} onClick={() => setModo("grillada")}>Grillada</button>
+          {/* Calculadora del mes (plan dual bruta + grillada) */}
+          <Section tag="Calculadora" title="Plan del mes">
+            <div style={{ marginBottom: 14 }}>
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                <span className="label">Bateas bruta / mes</span>
+                <span className="num" style={{ fontSize: 14.5, color: C.ink }}>{qBruta} · {N(diaB.tn)} tn · <span style={{ color: diaB.margen >= 0 ? C.verde : C.rojo }}>{$(diaB.margen)}</span></span>
               </div>
-            }>
+              <input type="range" min={0} max={40} value={qBruta} onChange={(e) => setQBruta(parseInt(e.target.value))}
+                style={{ width: "100%", accentColor: C.accent }} aria-label="Bateas de bruta por mes" />
+            </div>
             <div style={{ marginBottom: 16 }}>
               <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                <span className="label">Bateas a cargar</span>
-                <span className="num" style={{ fontSize: 18, color: C.accent }}>{bateas} · {N(dia.tn)} tn</span>
+                <span className="label">Bateas grillada / mes</span>
+                <span className="num" style={{ fontSize: 14.5, color: C.ink }}>{qGrillada} · {N(diaG.tn)} tn · <span style={{ color: diaG.margen >= 0 ? C.verde : C.rojo }}>{$(diaG.margen)}</span></span>
               </div>
-              <input type="range" min={1} max={10} value={bateas} onChange={(e) => setBateas(parseInt(e.target.value))}
-                style={{ width: "100%", accentColor: C.accent }} />
+              <input type="range" min={0} max={40} value={qGrillada} onChange={(e) => setQGrillada(parseInt(e.target.value))}
+                style={{ width: "100%", accentColor: C.accent }} aria-label="Bateas de grillada por mes" />
             </div>
             <table style={{ width: "100%" }} className="brk">
               <tbody>
-                <tr><td>Ingreso bruto</td><td className="num">{$(dia.ingresoBruto)}</td></tr>
-                <tr><td>− Socios ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(dia.comision)}</td></tr>
-                <tr><td>− Gasoil + pala</td><td className="num" style={{ color: C.rojo }}>−{N(dia.gasoil + dia.reserva)}</td></tr>
-                <tr><td>− Mano de obra + varios</td><td className="num" style={{ color: C.rojo }}>−{N(dia.manoObra + dia.varios)}</td></tr>
-                <tr><td>− Regalía{dia.amortGrilla ? " + amort. grilla" : ""}</td><td className="num" style={{ color: C.rojo }}>−{N(dia.regaliaMonto + dia.amortGrilla)}</td></tr>
+                <tr><td>Margen bruta</td><td className="num" style={{ color: diaB.margen >= 0 ? C.verde : C.rojo }}>{$(diaB.margen)}</td></tr>
+                <tr><td>Margen grillada</td><td className="num" style={{ color: diaG.margen >= 0 ? C.verde : C.rojo }}>{$(diaG.margen)}</td></tr>
               </tbody>
             </table>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginTop: 14, paddingTop: 14, borderTop: `2px solid ${C.ink}` }}>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Margen del día</span>
-              <span className="num" style={{ fontSize: 26, color: dia.margen >= 0 ? C.verde : C.rojo }}>{$(dia.margen)}</span>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Margen del mes</span>
+              <span className="num" style={{ fontSize: 26, color: totalMargenMes >= 0 ? C.verde : C.rojo }}>{$(totalMargenMes)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", color: C.ink2, fontSize: 12.5, marginTop: 6 }}>
-              <span>{$(dia.margenBatea)} / batea</span><span>{$(dia.margenTn)} / tn</span>
+              <span>{N(totalTnMes)} tn en total</span><span>{qBruta + qGrillada} bateas</span>
             </div>
           </Section>
         </div>
@@ -1131,7 +1206,13 @@ function AppInner({ user }) {
         </Section>
 
         {/* RESUMEN POR MES */}
-        <Section tag="Resumen" title="Mes por mes">
+        <Section tag="Resumen" title="Mes por mes"
+          right={
+            <div className="row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <button className="tog" onClick={exportarResumenMensual}>↓ CSV mensual</button>
+              <button className="tog" onClick={exportarResumenSemanal}>↓ CSV semanal</button>
+            </div>
+          }>
           {resumenMeses.length === 0 ? (
             <div style={{ color: C.ink2, fontSize: 14, padding: "8px 0" }}>El resumen se arma solo a medida que registrás cargas.</div>
           ) : (
@@ -1212,9 +1293,9 @@ function AppInner({ user }) {
         </Section>
 
         {/* PROYECCIÓN */}
-        <Section tag="Proyección" title={`Si cargás ${cfg.objetivoSemana} bateas/semana (${modo})`}>
+        <Section tag="Proyección" title={`Si cargás ${qBruta} bruta + ${qGrillada} grillada por mes`}>
           <div className="grid-3">
-            <Kpi label="Por semana" value={$(proySem)} sub="margen de contribución" color={C.accent} />
+            <Kpi label="Por semana" value={$(proySem)} sub="≈ mes ÷ 4,33" color={C.accent} />
             <Kpi label="Por mes" value={$(proyMes)} sub="≈ 4,33 semanas" color={C.accent} />
             <Kpi label="Por año" value={$(proyAnio)} sub="52 semanas" color={C.accent} />
           </div>
@@ -1229,7 +1310,8 @@ function AppInner({ user }) {
               <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" step={100} />
               <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
               <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
-              <Field label="Objetivo semanal" value={cfgDraft.objetivoSemana} onChange={setD("objetivoSemana")} suffix="bateas" />
+              <Field label="Objetivo bruta / mes" value={cfgDraft.objetivoBrutaMes} onChange={setD("objetivoBrutaMes")} suffix="bateas" />
+              <Field label="Objetivo grillada / mes" value={cfgDraft.objetivoGrilladaMes} onChange={setD("objetivoGrilladaMes")} suffix="bateas" />
               <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
               <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
               <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" step={0.5} />
