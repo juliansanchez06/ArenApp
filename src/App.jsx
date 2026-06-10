@@ -404,6 +404,7 @@ function AppInner({ user }) {
   const [prCanal, setPrCanal] = useState("Directo");
   const [prBateas, setPrBateas] = useState(1);
   const [prTn, setPrTn] = useState(DEFAULTS.tnPorBatea);
+  const [propExp, setPropExp] = useState({});       // {id: true} propuestas desplegadas
 
   // ── Sincronización con Firestore (un documento por usuario) ──
   const hydrated = useRef(false);   // true cuando ya recibimos los datos del servidor (evita pisar con vacío)
@@ -1266,8 +1267,12 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
                 <tbody>
                   {propuestas.map((p) => {
                     const col = p.veredicto === "Conviene" ? C.verde : p.veredicto === "Al límite" ? C.amarillo : C.rojo;
+                    const abierto = !!propExp[p.id];
+                    const pe = p.econ || analizarPropuesta(cfg, p.modo, p.canal, p.precio, p.bateas);
+                    const piso = p.piso != null ? p.piso : pisoPropuesta(cfg, p.modo, p.canal, p.bateas);
                     return (
-                      <tr key={p.id}>
+                      <React.Fragment key={p.id}>
+                      <tr>
                         <td data-label="Fecha" className="num" style={{ fontSize: 12.5 }}>{p.fecha}</td>
                         <td data-label="Quién">{p.quien}</td>
                         <td data-label="Modo"><span className="pill" style={{ background: p.modo === "grillada" ? `${C.accent}1a` : `${C.ink}0d`, color: p.modo === "grillada" ? C.accent : C.ink }}>{p.modo}</span></td>
@@ -1277,10 +1282,35 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
                         <td data-label="Margen" className="num" style={{ textAlign: "right", color: p.margen >= 0 ? C.verde : C.rojo }}>{$(p.margen)}</td>
                         <td data-label="Veredicto"><span className="pill" style={{ background: `${col}1a`, color: col }}>{p.veredicto}</span></td>
                         <td data-label="" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button className="del" title={abierto ? "Ocultar detalle" : "Ver detalle"} aria-label="Ver detalle" style={{ marginRight: 4, color: abierto ? C.accent : undefined }} onClick={() => setPropExp((m) => ({ ...m, [p.id]: !m[p.id] }))}>{abierto ? "▴" : "▾"}</button>
                           <button className="del" title="Exportar PDF" aria-label="Exportar PDF" style={{ marginRight: 4 }} onClick={() => exportarPropuestaPDF(p)}>↧</button>
                           <button className="del" title="Eliminar" aria-label="Eliminar propuesta" onClick={() => borrarPropuesta(p.id)}>×</button>
                         </td>
                       </tr>
+                      {abierto && (
+                        <tr>
+                          <td data-label="" colSpan={9} style={{ display: "block", background: `${C.accent}0a`, borderRadius: 10, padding: "6px 16px 12px", margin: "0 0 4px" }}>
+                            <table style={{ width: "100%" }} className="brk">
+                              <tbody>
+                                <tr><td>Ingreso bruto ({N(pe.tn)} tn × {$(p.precio)})</td><td className="num">{$(pe.ingresoBruto)}</td></tr>
+                                {p.canal === "Socios"
+                                  ? <tr><td>− Comisión socios</td><td className="num" style={{ color: C.rojo }}>−{N(pe.comision)}</td></tr>
+                                  : <tr><td>Comisión socios</td><td className="num" style={{ color: C.ink2 }}>venta directa</td></tr>}
+                                <tr><td>− Regalía</td><td className="num" style={{ color: C.rojo }}>−{N(pe.regaliaMonto)}</td></tr>
+                                <tr><td>− Gasoil + reserva pala</td><td className="num" style={{ color: C.rojo }}>−{N(pe.gasoil + pe.reserva)}</td></tr>
+                                <tr><td>− Mano de obra</td><td className="num" style={{ color: C.rojo }}>−{N(pe.manoObra)}</td></tr>
+                                <tr><td>− Varios</td><td className="num" style={{ color: C.rojo }}>−{N(pe.varios)}</td></tr>
+                                {p.modo === "grillada" && <tr><td>− Amortización grilla</td><td className="num" style={{ color: C.rojo }}>−{N(pe.amortGrilla)}</td></tr>}
+                                <tr><td style={{ fontWeight: 700 }}>Margen (te queda a vos)</td><td className="num" style={{ color: pe.margen >= 0 ? C.verde : C.rojo, fontWeight: 700 }}>{$(pe.margen)}</td></tr>
+                                <tr><td>Margen por tn</td><td className="num">{$(pe.margenTn)}/tn</td></tr>
+                                <tr><td>Piso para no perder</td><td className="num" style={{ color: C.accent }}>{$(piso)}/tn</td></tr>
+                              </tbody>
+                            </table>
+                            <button className="tog" style={{ marginTop: 12 }} onClick={() => exportarPropuestaPDF(p)}>↧ Exportar PDF</button>
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
