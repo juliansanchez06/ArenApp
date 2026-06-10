@@ -513,6 +513,10 @@ function AppInner({ user }) {
   } else {
     prDec = { color: C.verde, txt: "BUENA PROPUESTA", msg: `Deja ${$(prEcon.margen)} (${$(prEcon.margenTn)}/tn). Tu piso es ~${$(prPiso)}/tn.` };
   }
+  const prVeredicto = prDec.color === C.verde ? "Conviene" : prDec.color === C.amarillo ? "Al límite" : prDec.color === C.rojo ? "No conviene" : "—";
+  // cuánto cubre del objetivo mensual (lo fijado en la calculadora)
+  const prObjetivo = prModo === "bruta" ? qBruta : qGrillada;
+  const prCobertura = prObjetivo > 0 ? (prBateasNum / prObjetivo) * 100 : 0;
 
   // métricas del mes / semana
   const stats = useMemo(() => {
@@ -711,6 +715,42 @@ function AppInner({ user }) {
     const item = propuestas[idx];
     setPropuestas((ps) => ps.filter((p) => p.id !== id));
     armarUndo("propuesta", item, idx, "Propuesta eliminada");
+  }
+  // Exporta una propuesta a PDF abriendo el diálogo de impresión (Guardar como PDF). Sin librerías.
+  function exportarPropuestaPDF(p) {
+    const e = p.econ || analizarPropuesta(cfg, p.modo, p.canal, p.precio, p.bateas);
+    const piso = p.piso != null ? p.piso : pisoPropuesta(cfg, p.modo, p.canal, p.bateas);
+    const fmt = (n) => (isFinite(n) ? "$" + Math.round(n).toLocaleString("es-AR") : "—");
+    const vCol = p.veredicto === "Conviene" ? "#1c6b3e" : p.veredicto === "Al límite" ? "#8a6010" : "#a82c20";
+    const row = (l, v, neg) => `<tr><td>${l}</td><td style="text-align:right;font-family:monospace;${neg ? "color:#a82c20" : ""}">${v}</td></tr>`;
+    const filas = [
+      row("Ingreso bruto", fmt(e.ingresoBruto)),
+      p.canal === "Socios" ? row(`− Comisión socios (${cfg.comisionSocios}%)`, "−" + fmt(e.comision), true) : row("Comisión socios", "venta directa"),
+      row(`− Regalía (${cfg.regalia}%)`, "−" + fmt(e.regaliaMonto), true),
+      row("− Gasoil + reserva pala", "−" + fmt(e.gasoil + e.reserva), true),
+      row("− Mano de obra", "−" + fmt(e.manoObra), true),
+      row("− Varios", "−" + fmt(e.varios), true),
+      p.modo === "grillada" ? row("− Amortización grilla", "−" + fmt(e.amortGrilla), true) : "",
+    ].join("");
+    const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Propuesta El Retiro</title>
+<style>body{font-family:Arial,Helvetica,sans-serif;color:#211b17;max-width:640px;margin:24px auto;padding:0 16px}
+h1{color:#5a0f1c;margin:0 0 2px;font-size:24px;letter-spacing:-.02em}
+.sub{color:#857a6e;font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:18px}
+table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-bottom:1px solid #e7e0d4;font-size:14px}
+.tot td{border-top:2px solid #211b17;border-bottom:0;font-weight:bold;font-size:17px;padding-top:12px}
+.meta{background:#f5efe6;border-radius:10px;padding:12px 16px;font-size:13px;margin-bottom:8px;line-height:1.6}
+.vd{display:inline-block;padding:7px 16px;border-radius:20px;font-weight:bold;font-size:14px;margin-top:12px}
+.ft{color:#857a6e;font-size:11px;margin-top:26px}</style></head><body>
+<h1>EL RETIRO</h1><div class="sub">Análisis de propuesta · Arenera · Sol de Julio</div>
+<div class="meta"><b>${p.quien || "—"}</b> &middot; ${p.fecha}<br>${p.bateas} bateas &middot; ${Math.round(p.tn)} tn &middot; arena ${p.modo} &middot; venta ${p.canal} &middot; precio ${fmt(p.precio)}/tn</div>
+<table><tbody>${filas}<tr class="tot"><td>Margen (te queda a vos)</td><td style="text-align:right;font-family:monospace;color:${e.margen >= 0 ? "#1c6b3e" : "#a82c20"}">${fmt(e.margen)}</td></tr></tbody></table>
+<table><tbody>${row("Margen por tonelada", fmt(e.margenTn) + "/tn")}${row("Piso para no perder", fmt(piso) + "/tn")}</tbody></table>
+<div class="vd" style="background:${vCol}22;color:${vCol}">${p.veredicto || "—"}</div>
+<div class="ft">Generado con El Retiro · ${new Date().toLocaleDateString("es-AR")}</div>
+<script>window.onload=function(){window.print()}<\/script></body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { setImportErr("El navegador bloqueó la ventana. Permití las ventanas emergentes para exportar el PDF."); return; }
+    w.document.open(); w.document.write(html); w.document.close();
   }
 
   function programar() {
@@ -1189,18 +1229,35 @@ function AppInner({ user }) {
           </div>
 
           {prPrecioNum > 0 && prBateasNum > 0 && (
-            <table style={{ width: "100%" }} className="brk">
-              <tbody>
-                <tr><td>Ingreso bruto ({N(prEcon.tn)} tn × {$(prPrecioNum)})</td><td className="num">{$(prEcon.ingresoBruto)}</td></tr>
-                <tr><td>− Costos {prCanal === "Socios" ? `(incluye ${cfg.comisionSocios}% socios)` : "(venta directa, sin socios)"}</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.costoTotal + prEcon.comision)}</td></tr>
-                <tr><td style={{ fontWeight: 700 }}>Margen</td><td className="num" style={{ color: prEcon.margen >= 0 ? C.verde : C.rojo, fontWeight: 700 }}>{$(prEcon.margen)}</td></tr>
-                <tr><td>Margen por tn</td><td className="num">{$(prEcon.margenTn)}/tn</td></tr>
-                <tr><td>Piso para no perder</td><td className="num" style={{ color: C.accent }}>{$(prPiso)}/tn</td></tr>
-              </tbody>
-            </table>
+            <>
+              <table style={{ width: "100%" }} className="brk">
+                <tbody>
+                  <tr><td>Ingreso bruto ({N(prEcon.tn)} tn × {$(prPrecioNum)})</td><td className="num">{$(prEcon.ingresoBruto)}</td></tr>
+                  {prCanal === "Socios"
+                    ? <tr><td>− Comisión socios ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.comision)}</td></tr>
+                    : <tr><td>Comisión socios</td><td className="num" style={{ color: C.ink2 }}>venta directa</td></tr>}
+                  <tr><td>− Regalía ({cfg.regalia}%)</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.regaliaMonto)}</td></tr>
+                  <tr><td>− Gasoil + reserva pala</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.gasoil + prEcon.reserva)}</td></tr>
+                  <tr><td>− Mano de obra</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.manoObra)}</td></tr>
+                  <tr><td>− Varios</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.varios)}</td></tr>
+                  {prModo === "grillada" && <tr><td>− Amortización grilla</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.amortGrilla)}</td></tr>}
+                  <tr><td style={{ fontWeight: 700 }}>Margen (te queda a vos)</td><td className="num" style={{ color: prEcon.margen >= 0 ? C.verde : C.rojo, fontWeight: 700 }}>{$(prEcon.margen)}</td></tr>
+                  <tr><td>Margen por tn</td><td className="num">{$(prEcon.margenTn)}/tn</td></tr>
+                  <tr><td>Piso para no perder</td><td className="num" style={{ color: C.accent }}>{$(prPiso)}/tn</td></tr>
+                </tbody>
+              </table>
+              {prObjetivo > 0 && (
+                <div style={{ marginTop: 12, background: `${C.accent}0a`, borderRadius: 10, padding: "12px 16px", fontSize: 13, color: C.ink2, lineHeight: 1.5 }}>
+                  Cubre <b style={{ color: C.ink }}>{prBateasNum} de {prObjetivo}</b> bateas de {prModo} de tu plan del mes (<b style={{ color: C.ink }}>{N(prCobertura)}%</b>).
+                </div>
+              )}
+            </>
           )}
 
-          <button className="btn" style={{ marginTop: 16 }} onClick={guardarPropuesta}>+ Guardar propuesta</button>
+          <div className="row" style={{ marginTop: 16, gap: 10, flexWrap: "wrap" }}>
+            <button className="btn" onClick={guardarPropuesta}>+ Guardar propuesta</button>
+            <button className="tog" disabled={!(prPrecioNum > 0 && prBateasNum > 0)} onClick={() => exportarPropuestaPDF({ quien: prQuien.trim() || "—", fecha: todayISO(), modo: prModo, canal: prCanal, precio: prPrecioNum, bateas: prBateasNum, tn: prEcon.tn, econ: prEcon, piso: prPiso, veredicto: prVeredicto })}>↧ Exportar PDF</button>
+          </div>
 
           {propuestas.length > 0 && (
             <div style={{ overflowX: "auto", marginTop: 20 }}>
@@ -1219,7 +1276,10 @@ function AppInner({ user }) {
                         <td data-label="Tn" className="num" style={{ textAlign: "right" }}>{N(p.tn)}</td>
                         <td data-label="Margen" className="num" style={{ textAlign: "right", color: p.margen >= 0 ? C.verde : C.rojo }}>{$(p.margen)}</td>
                         <td data-label="Veredicto"><span className="pill" style={{ background: `${col}1a`, color: col }}>{p.veredicto}</span></td>
-                        <td data-label="" style={{ textAlign: "right" }}><button className="del" title="Eliminar" aria-label="Eliminar propuesta" onClick={() => borrarPropuesta(p.id)}>×</button></td>
+                        <td data-label="" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          <button className="del" title="Exportar PDF" aria-label="Exportar PDF" style={{ marginRight: 4 }} onClick={() => exportarPropuestaPDF(p)}>↧</button>
+                          <button className="del" title="Eliminar" aria-label="Eliminar propuesta" onClick={() => borrarPropuesta(p.id)}>×</button>
+                        </td>
                       </tr>
                     );
                   })}
