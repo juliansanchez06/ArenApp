@@ -386,7 +386,9 @@ function AppInner({ user }) {
     if (json === lastSync.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      setDoc(doc(db, "paneles", user.uid), { cfg, registros, clientes, programadas }, { merge: true })
+      // Firestore NO acepta valores undefined: el clon por JSON los elimina (deja la data limpia).
+      const payload = JSON.parse(JSON.stringify({ cfg, registros, clientes, programadas }));
+      setDoc(doc(db, "paneles", user.uid), payload, { merge: true })
         .then(() => { lastSync.current = json; })
         .catch((e) => { try { console.error("No se pudo guardar:", e); } catch {} });
     }, 600);
@@ -734,7 +736,7 @@ function AppInner({ user }) {
           clienteId: r.clienteId != null ? r.clienteId : "",
           cliente: typeof r.cliente === "string" && r.cliente ? r.cliente : "—",
           canal: r.canal === "Directo" ? "Directo" : "Socios",
-          econ: r.econ && typeof r.econ === "object" ? r.econ : undefined,
+          ...(r.econ && typeof r.econ === "object" ? { econ: r.econ } : {}),
         });
       } else descartados++;
     }
@@ -1382,5 +1384,3 @@ function AppInner({ user }) {
         </div>
       )}
     </div>
-  );
-}
