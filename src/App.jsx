@@ -103,6 +103,36 @@ function breakEvenBruta(cfg, bateasB) {
 }
 
 /* ────────────────────────────────────────────────────────────
+   ANALIZADOR DE PROPUESTAS
+   Reutiliza el motor: pisa el precio con el ofrecido y, si es venta
+   directa, anula la comisión de socios. Calcula con TUS costos.
+   ──────────────────────────────────────────────────────────── */
+function analizarPropuesta(cfg, modo, canal, precio, bateas) {
+  const ov = {
+    ...cfg,
+    precioBruta: precio,
+    precioGrillada: precio,
+    comisionSocios: canal === "Directo" ? 0 : cfg.comisionSocios,
+  };
+  return calcDia(ov, modo, bateas);
+}
+
+// Precio mínimo por tn para no perder en esta propuesta (margen = 0).
+function pisoPropuesta(cfg, modo, canal, bateas) {
+  const tn = (bateas || 0) * cfg.tnPorBatea;
+  if (tn <= 0) return Infinity;
+  const com = canal === "Directo" ? 0 : cfg.comisionSocios;
+  const factor = 1 - com / 100 - cfg.regalia / 100;
+  if (factor <= 0) return Infinity;
+  const horas = modo === "grillada" ? cfg.horasPalaGrillada : cfg.horasPalaBruta;
+  const jornales = modo === "grillada" ? cfg.jornalesGrillada : cfg.jornalesBruta;
+  const varios = modo === "grillada" ? cfg.variosGrillada : cfg.variosBruta;
+  const fijos = horas * cfg.palaConsumo * cfg.gasoilPrecio + horas * cfg.palaReserva + jornales * cfg.jornal + varios;
+  const amort = modo === "grillada" ? amortGrillaTn(cfg) * tn : 0;
+  return (fijos + amort) / (tn * factor);
+}
+
+/* ────────────────────────────────────────────────────────────
    HELPERS
    ──────────────────────────────────────────────────────────── */
 const $ = (n) => (isFinite(n) ? "$" + Math.round(n).toLocaleString("es-AR") : "—");
@@ -168,6 +198,7 @@ function Dot({ color }) {
 // Cada sección lleva su propio color de acento (mantiene la línea, solo cambia el tono del distintivo).
 const SECTION_COLORS = {
   "Decisión": "#5a0f1c",     // bordó
+  "Propuesta": "#1f5e7a",    // azul petróleo
   "Calculadora": "#8a5a14",  // latón
   "Cartera": "#2f6f63",      // verde azulado
   "Agenda": "#3f5488",       // azul acero
@@ -330,6 +361,7 @@ function AppInner({ user }) {
   const [registros, setRegistros] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [programadas, setProgramadas] = useState([]);
+  const [propuestas, setPropuestas] = useState([]);
   const [qBruta, setQBruta] = useState(DEFAULTS.objetivoBrutaMes);
   const [qGrillada, setQGrillada] = useState(DEFAULTS.objetivoGrilladaMes);
   const [showCfg, setShowCfg] = useState(false);
@@ -365,6 +397,14 @@ function AppInner({ user }) {
   const [cTel, setCTel] = useState("");
   const [cCanal, setCCanal] = useState("Socios");
 
+  // form de propuesta a analizar
+  const [prQuien, setPrQuien] = useState("");
+  const [prPrecio, setPrPrecio] = useState("");
+  const [prModo, setPrModo] = useState("bruta");
+  const [prCanal, setPrCanal] = useState("Directo");
+  const [prBateas, setPrBateas] = useState(1);
+  const [prTn, setPrTn] = useState(DEFAULTS.tnPorBatea);
+
   // ── Sincronización con Firestore (un documento por usuario) ──
   const hydrated = useRef(false);   // true cuando ya recibimos los datos del servidor (evita pisar con vacío)
   const lastSync = useRef("");      // último estado conocido del server (evita bucle de escrituras)
@@ -382,6 +422,7 @@ function AppInner({ user }) {
         const regL = Array.isArray(d.registros) ? d.registros : [];
         const cliL = Array.isArray(d.clientes) ? d.clientes : [];
         const progL = Array.isArray(d.programadas) ? d.programadas : [];
+        const propL = Array.isArray(d.propuestas) ? d.propuestas : [];
         // Plan de la calculadora: si está guardado lo usamos; si no, arranca en el objetivo mensual.
         const planB = d.plan && typeof d.plan.bruta === "number" ? d.plan.bruta : cfgL.objetivoBrutaMes;
         const planG = d.plan && typeof d.plan.grillada === "number" ? d.plan.grillada : cfgL.objetivoGrilladaMes;
@@ -394,7 +435,8 @@ function AppInner({ user }) {
         setRegistros(regL);
         setClientes(cliL);
         setProgramadas(progL);
-        lastSync.current = JSON.stringify({ cfg: cfgL, registros: regL, clientes: cliL, programadas: progL, plan: { bruta: planB, grillada: planG } });
+        setPropuestas(propL);
+        lastSync.current = JSON.stringify({ cfg: cfgL, registros: regL, clientes: cliL, programadas: progL, propuestas: propL, plan: { bruta: planB, grillada: planG } });
         hydrated.current = true;
       },
       (e) => { try { console.error("Firestore:", e); } catch {} hydrated.current = true; }
@@ -405,7 +447,7 @@ function AppInner({ user }) {
   // 2) Guardar cambios locales (con rebote), solo después de hidratar y solo si cambió algo
   useEffect(() => {
     if (!hydrated.current) return;
-    const estado = { cfg, registros, clientes, programadas, plan: { bruta: qBruta, grillada: qGrillada } };
+    const estado = { cfg, registros, clientes, programadas, propuestas, plan: { bruta: qBruta, grillada: qGrillada } };
     const json = JSON.stringify(estado);
     if (json === lastSync.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -416,7 +458,7 @@ function AppInner({ user }) {
         .then(() => { lastSync.current = json; })
         .catch((e) => { try { console.error("No se pudo guardar:", e); } catch {} });
     }, 600);
-  }, [cfg, registros, clientes, programadas, qBruta, qGrillada, user.uid]);
+  }, [cfg, registros, clientes, programadas, propuestas, qBruta, qGrillada, user.uid]);
 
   const setD = (k) => (v) => { setCfgDraft((d) => ({ ...d, [k]: v })); setCfgSaved(false); };
   const normCfg = (obj) => { const o = {}; for (const k in obj) { const v = obj[k]; o[k] = typeof v === "number" ? v : (parseFloat(v) || 0); } return o; };
@@ -449,6 +491,28 @@ function AppInner({ user }) {
   if (dif > 100) dec = { color: C.verde, txt: "CONVIENE GRILLAR", msg: `La grillada deja ${$(dif)}/tn más que la bruta a estas cantidades.` };
   else if (dif >= -100) dec = { color: C.amarillo, txt: "EMPATE → VENDÉ BRUTA", msg: "Casi lo mismo: menos laburo y desgaste yendo en bruta." };
   else dec = { color: C.rojo, txt: "VENDÉ BRUTA", msg: `Grillar te resta ${$(-dif)}/tn. No conviene a estos precios.` };
+
+  // ── Análisis en vivo de la propuesta ──
+  const prPrecioNum = parseFloat(prPrecio) || 0;
+  const prBateasNum = parseFloat(prBateas) || 0;
+  const prEcon = useMemo(
+    () => analizarPropuesta(cfg, prModo, prCanal, prPrecioNum, prBateasNum),
+    [cfg, prModo, prCanal, prPrecioNum, prBateasNum]
+  );
+  const prPiso = useMemo(
+    () => pisoPropuesta(cfg, prModo, prCanal, prBateasNum),
+    [cfg, prModo, prCanal, prBateasNum]
+  );
+  let prDec;
+  if (prPrecioNum <= 0 || prBateasNum <= 0) {
+    prDec = { color: C.ink2, txt: "CARGÁ LA PROPUESTA", msg: "Poné el precio ofrecido y la cantidad para analizarla." };
+  } else if (prPrecioNum < prPiso) {
+    prDec = { color: C.rojo, txt: "NO CONVIENE", msg: `Perdés ${$(-prEcon.margen)}. No bajes de ~${$(prPiso)}/tn para no perder.` };
+  } else if (prPrecioNum < prPiso * 1.12) {
+    prDec = { color: C.amarillo, txt: "AL LÍMITE", msg: `Apenas pasa el piso (~${$(prPiso)}/tn). Deja ${$(prEcon.margenTn)}/tn.` };
+  } else {
+    prDec = { color: C.verde, txt: "BUENA PROPUESTA", msg: `Deja ${$(prEcon.margen)} (${$(prEcon.margenTn)}/tn). Tu piso es ~${$(prPiso)}/tn.` };
+  }
 
   // métricas del mes / semana
   const stats = useMemo(() => {
@@ -610,8 +674,43 @@ function AppInner({ user }) {
     const { tipo, item, index } = undo;
     if (tipo === "registro") setRegistros((rs) => { const a = [...rs]; a.splice(Math.min(index, a.length), 0, item); return a; });
     if (tipo === "cliente") setClientes((cs) => { const a = [...cs]; a.splice(Math.min(index, a.length), 0, item); return a; });
+    if (tipo === "propuesta") setPropuestas((ps) => { const a = [...ps]; a.splice(Math.min(index, a.length), 0, item); return a; });
     if (undoTimer.current) clearTimeout(undoTimer.current);
     setUndo(null);
+  }
+
+  // ── Propuestas: cantidad vinculada tn↔bateas, guardar y borrar ──
+  function setBateasProp(v) {
+    setPrBateas(v);
+    const b = parseFloat(v) || 0;
+    setPrTn(b ? +(b * cfg.tnPorBatea).toFixed(2) : 0);
+  }
+  function setTnProp(v) {
+    setPrTn(v);
+    const t = parseFloat(v) || 0;
+    setPrBateas(cfg.tnPorBatea ? +(t / cfg.tnPorBatea).toFixed(2) : 0);
+  }
+  function guardarPropuesta() {
+    const precio = parseFloat(prPrecio) || 0;
+    const b = parseFloat(prBateas) || 0;
+    if (precio <= 0 || b <= 0) return;
+    const econ = analizarPropuesta(cfg, prModo, prCanal, precio, b);
+    const piso = pisoPropuesta(cfg, prModo, prCanal, b);
+    const veredicto = precio < piso ? "No conviene" : precio < piso * 1.12 ? "Al límite" : "Conviene";
+    setPropuestas((ps) => [
+      { id: newId(), fecha: todayISO(), quien: prQuien.trim() || "—",
+        modo: prModo, canal: prCanal, precio, bateas: b, tn: econ.tn,
+        margen: econ.margen, margenTn: econ.margenTn, piso, veredicto, econ },
+      ...ps,
+    ]);
+    setPrQuien(""); setPrPrecio("");
+  }
+  function borrarPropuesta(id) {
+    const idx = propuestas.findIndex((p) => p.id === id);
+    if (idx < 0) return;
+    const item = propuestas[idx];
+    setPropuestas((ps) => ps.filter((p) => p.id !== id));
+    armarUndo("propuesta", item, idx, "Propuesta eliminada");
   }
 
   function programar() {
@@ -1059,6 +1158,76 @@ function AppInner({ user }) {
             </div>
           </Section>
         </div>
+
+        {/* ANALIZAR PROPUESTA */}
+        <Section tag="Propuesta" title="Analizar propuesta"
+          right={<span className="label">{propuestas.length} guardadas</span>}>
+          <div className="grid-form" style={{ marginBottom: 18 }}>
+            <label style={{ display: "block", gridColumn: "span 2" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Quién (opcional)</span>
+              <div className="inputWrap"><input className="input" style={{ fontFamily: "Archivo, sans-serif" }} value={prQuien} placeholder="Corralón San José…" onChange={(e) => setPrQuien(e.target.value)} /></div>
+            </label>
+            <Field label="Precio ofrecido" value={prPrecio} onChange={setPrPrecio} suffix="$/tn" />
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Modo</span>
+              <div className="inputWrap selectWrap"><select className="input" value={prModo} onChange={(e) => setPrModo(e.target.value)}><option value="bruta">Bruta</option><option value="grillada">Grillada</option></select></div>
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
+              <div className="inputWrap selectWrap"><select className="input" value={prCanal} onChange={(e) => setPrCanal(e.target.value)}><option>Directo</option><option>Socios</option></select></div>
+            </label>
+            <Field label="Bateas" value={prBateas} onChange={setBateasProp} suffix="bat" />
+            <Field label="Toneladas" value={prTn} onChange={setTnProp} suffix="tn" />
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 16, background: `${prDec.color}0d`, border: `1px solid ${prDec.color}33`, borderRadius: 12, padding: "18px 20px", marginBottom: 16 }}>
+            <Dot color={prDec.color} />
+            <div>
+              <div className="num" style={{ fontSize: 19, color: prDec.color }}>{prDec.txt}</div>
+              <div style={{ fontSize: 13, color: C.ink2, marginTop: 3 }}>{prDec.msg}</div>
+            </div>
+          </div>
+
+          {prPrecioNum > 0 && prBateasNum > 0 && (
+            <table style={{ width: "100%" }} className="brk">
+              <tbody>
+                <tr><td>Ingreso bruto ({N(prEcon.tn)} tn × {$(prPrecioNum)})</td><td className="num">{$(prEcon.ingresoBruto)}</td></tr>
+                <tr><td>− Costos {prCanal === "Socios" ? `(incluye ${cfg.comisionSocios}% socios)` : "(venta directa, sin socios)"}</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.costoTotal + prEcon.comision)}</td></tr>
+                <tr><td style={{ fontWeight: 700 }}>Margen</td><td className="num" style={{ color: prEcon.margen >= 0 ? C.verde : C.rojo, fontWeight: 700 }}>{$(prEcon.margen)}</td></tr>
+                <tr><td>Margen por tn</td><td className="num">{$(prEcon.margenTn)}/tn</td></tr>
+                <tr><td>Piso para no perder</td><td className="num" style={{ color: C.accent }}>{$(prPiso)}/tn</td></tr>
+              </tbody>
+            </table>
+          )}
+
+          <button className="btn" style={{ marginTop: 16 }} onClick={guardarPropuesta}>+ Guardar propuesta</button>
+
+          {propuestas.length > 0 && (
+            <div style={{ overflowX: "auto", marginTop: 20 }}>
+              <table className="reg">
+                <thead><tr><th>Fecha</th><th>Quién</th><th>Modo</th><th>Canal</th><th style={{ textAlign: "right" }}>Precio</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Margen</th><th>Veredicto</th><th></th></tr></thead>
+                <tbody>
+                  {propuestas.map((p) => {
+                    const col = p.veredicto === "Conviene" ? C.verde : p.veredicto === "Al límite" ? C.amarillo : C.rojo;
+                    return (
+                      <tr key={p.id}>
+                        <td data-label="Fecha" className="num" style={{ fontSize: 12.5 }}>{p.fecha}</td>
+                        <td data-label="Quién">{p.quien}</td>
+                        <td data-label="Modo"><span className="pill" style={{ background: p.modo === "grillada" ? `${C.accent}1a` : `${C.ink}0d`, color: p.modo === "grillada" ? C.accent : C.ink }}>{p.modo}</span></td>
+                        <td data-label="Canal"><span className="pill" style={{ background: p.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: p.canal === "Directo" ? C.verde : C.amarillo }}>{p.canal}</span></td>
+                        <td data-label="Precio" className="num" style={{ textAlign: "right" }}>{$(p.precio)}</td>
+                        <td data-label="Tn" className="num" style={{ textAlign: "right" }}>{N(p.tn)}</td>
+                        <td data-label="Margen" className="num" style={{ textAlign: "right", color: p.margen >= 0 ? C.verde : C.rojo }}>{$(p.margen)}</td>
+                        <td data-label="Veredicto"><span className="pill" style={{ background: `${col}1a`, color: col }}>{p.veredicto}</span></td>
+                        <td data-label="" style={{ textAlign: "right" }}><button className="del" title="Eliminar" aria-label="Eliminar propuesta" onClick={() => borrarPropuesta(p.id)}>×</button></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
 
         {/* CLIENTES */}
         <Section tag="Cartera" title="Clientes"
