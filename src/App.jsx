@@ -1384,3 +1384,5 @@ function AppInner({ user }) {
         </div>
       )}
     </div>
+  );
+}
