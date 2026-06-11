@@ -21,11 +21,15 @@ const DEFAULTS = {
   gasoilPrecio: 1800,       // $/L
   palaConsumo: 9,           // L/h
   palaReserva: 11400,       // $/h (reparación + amortización pala)
-  jornal: 35000,            // $/día
+  jornal: 35000,            // $/día (jornal base, sin cargas)
+  cargasSociales: 55,       // % sobre el jornal base
+  horasJornada: 8,          // horas de la jornada laboral
+  horasPersonalBruta: 3,    // horas de persona por sesión de bruta
+  horasPersonalGrillada: 5.5, // horas de persona por sesión de grillada
   horasPalaBruta: 3,
   horasPalaGrillada: 5.5,
-  jornalesBruta: 1,
-  jornalesGrillada: 2,
+  jornalesBruta: 1,         // (legado, ya no se usa para el costo)
+  jornalesGrillada: 2,      // (legado)
   variosBruta: 8000,
   variosGrillada: 15000,
   costoGrilla: 1500000,     // $ inversión grilla
@@ -35,6 +39,17 @@ const DEFAULTS = {
 /* ────────────────────────────────────────────────────────────
    MOTOR DE CÁLCULO
    ──────────────────────────────────────────────────────────── */
+// Costo de una hora de personal, con cargas sociales: jornal × (1 + cargas%) ÷ horas de jornada.
+function costoHoraPersonal(cfg) {
+  const hj = cfg.horasJornada || 0;
+  return hj > 0 ? (cfg.jornal || 0) * (1 + (cfg.cargasSociales || 0) / 100) / hj : 0;
+}
+// Mano de obra de una sesión = horas de persona del modo × costo por hora.
+function manoObraModo(cfg, modo) {
+  const horas = modo === "grillada" ? cfg.horasPersonalGrillada : cfg.horasPersonalBruta;
+  return (horas || 0) * costoHoraPersonal(cfg);
+}
+
 function calcDia(cfg, modo, bateas) {
   const tn = bateas * cfg.tnPorBatea;
   const precio = modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta;
@@ -44,12 +59,11 @@ function calcDia(cfg, modo, bateas) {
   const ingresoNeto = ingresoBruto - comision;
 
   const horas = modo === "grillada" ? cfg.horasPalaGrillada : cfg.horasPalaBruta;
-  const jornales = modo === "grillada" ? cfg.jornalesGrillada : cfg.jornalesBruta;
   const varios = modo === "grillada" ? cfg.variosGrillada : cfg.variosBruta;
 
   const gasoil = horas * cfg.palaConsumo * cfg.gasoilPrecio;
   const reserva = horas * cfg.palaReserva;
-  const manoObra = jornales * cfg.jornal;
+  const manoObra = manoObraModo(cfg, modo);
   const amortGrilla = modo === "grillada" ? amortGrillaTn(cfg) * tn : 0;
 
   const costoTotal = gasoil + reserva + manoObra + varios + regaliaMonto + amortGrilla;
@@ -82,7 +96,7 @@ function breakEvenGrillada(cfg, bateasG, bateasB) {
   const opG =
     (cfg.horasPalaGrillada * cfg.palaConsumo * cfg.gasoilPrecio +
       cfg.horasPalaGrillada * cfg.palaReserva +
-      cfg.jornalesGrillada * cfg.jornal +
+      manoObraModo(cfg, "grillada") +
       cfg.variosGrillada) / tn + amortGrillaTn(cfg);
   const netoB = netoTn(cfg, "bruta", bateasB);
   return (netoB + opG) / factor;
@@ -97,7 +111,7 @@ function breakEvenBruta(cfg, bateasB) {
   const opB =
     (cfg.horasPalaBruta * cfg.palaConsumo * cfg.gasoilPrecio +
       cfg.horasPalaBruta * cfg.palaReserva +
-      cfg.jornalesBruta * cfg.jornal +
+      manoObraModo(cfg, "bruta") +
       cfg.variosBruta) / tn;
   return opB / factor;
 }
@@ -125,9 +139,8 @@ function pisoPropuesta(cfg, modo, canal, bateas) {
   const factor = 1 - com / 100 - cfg.regalia / 100;
   if (factor <= 0) return Infinity;
   const horas = modo === "grillada" ? cfg.horasPalaGrillada : cfg.horasPalaBruta;
-  const jornales = modo === "grillada" ? cfg.jornalesGrillada : cfg.jornalesBruta;
   const varios = modo === "grillada" ? cfg.variosGrillada : cfg.variosBruta;
-  const fijos = horas * cfg.palaConsumo * cfg.gasoilPrecio + horas * cfg.palaReserva + jornales * cfg.jornal + varios;
+  const fijos = horas * cfg.palaConsumo * cfg.gasoilPrecio + horas * cfg.palaReserva + manoObraModo(cfg, modo) + varios;
   const amort = modo === "grillada" ? amortGrillaTn(cfg) * tn : 0;
   return (fijos + amort) / (tn * factor);
 }
@@ -1162,12 +1175,17 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
               <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" step={0.5} />
               <Field label="Reserva pala" value={cfgDraft.palaReserva} onChange={setD("palaReserva")} suffix="$/h" step={500} />
-              <Field label="Jornal" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" step={1000} />
+              <Field label="Jornal base" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" step={1000} />
+              <Field label="Cargas sociales" value={cfgDraft.cargasSociales} onChange={setD("cargasSociales")} suffix="%" step={1} />
+              <Field label="Horas jornada" value={cfgDraft.horasJornada} onChange={setD("horasJornada")} suffix="h" step={0.5} />
+              <Field label="Horas personal (bruta)" value={cfgDraft.horasPersonalBruta} onChange={setD("horasPersonalBruta")} suffix="h" step={0.5} />
+              <Field label="Horas personal (grillada)" value={cfgDraft.horasPersonalGrillada} onChange={setD("horasPersonalGrillada")} suffix="h" step={0.5} />
               <Field label="Horas pala (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" step={0.5} />
               <Field label="Horas pala (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
-              <Field label="Jornales (bruta)" value={cfgDraft.jornalesBruta} onChange={setD("jornalesBruta")} />
-              <Field label="Jornales (grillada)" value={cfgDraft.jornalesGrillada} onChange={setD("jornalesGrillada")} />
               <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" step={50000} />
+            </div>
+            <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 14, background: `${C.accent}0a`, borderRadius: 10, padding: "10px 14px", lineHeight: 1.5 }}>
+              Costo de personal calculado: <b className="num" style={{ color: C.ink }}>{$(costoHoraPersonal(normCfg(cfgDraft)))}/h</b> (jornal + cargas ÷ horas de jornada). La mano de obra de cada operación = horas del modo × ese valor — así el sueldo se reparte por hora y no carga el día entero a una sola carga.
             </div>
             <div className="row" style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.line}`, alignItems: "center", gap: 16, flexWrap: "wrap" }}>
               <button className="btn" style={{ background: cfgDirty ? C.accent : C.ink2, cursor: cfgDirty ? "pointer" : "default" }} disabled={!cfgDirty} onClick={guardarCfg}>Guardar supuestos</button>
