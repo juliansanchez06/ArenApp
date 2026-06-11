@@ -412,7 +412,6 @@ function AppInner({ user }) {
   const [cLocalidad, setCLocalidad] = useState("");
   const [cTel, setCTel] = useState("");
   const [cCanal, setCCanal] = useState("Socios");
-  const [cPalaCliente, setCPalaCliente] = useState(false);
 
   // form de propuesta a analizar
   const [prQuien, setPrQuien] = useState("");
@@ -827,9 +826,9 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
     if (!cNombre.trim()) return;
     setClientes((cs) => [
       ...cs,
-      { id: newId(), nombre: cNombre.trim(), localidad: cLocalidad.trim(), tel: cTel.trim(), canal: cCanal, palaCliente: cPalaCliente },
+      { id: newId(), nombre: cNombre.trim(), localidad: cLocalidad.trim(), tel: cTel.trim(), canal: cCanal },
     ]);
-    setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios"); setCPalaCliente(false);
+    setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios");
   }
   function borrarCliente(id) {
     const idx = clientes.findIndex((c) => c.id === id);
@@ -842,7 +841,7 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
   function elegirCliente(id) {
     setFClienteId(id);
     const cl = clientes.find((c) => String(c.id) === String(id));
-    if (cl) { setFCanal(cl.canal); setFPalaCliente(!!cl.palaCliente); }
+    if (cl) setFCanal(cl.canal);
   }
 
   function exportar() {
@@ -978,7 +977,6 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           localidad: typeof c.localidad === "string" ? c.localidad : "",
           tel: typeof c.tel === "string" ? c.tel : "",
           canal: c.canal === "Directo" ? "Directo" : "Socios",
-          palaCliente: !!c.palaCliente,
         });
       } else descartados++;
     }
@@ -1478,14 +1476,6 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <div className="inputWrap selectWrap">
                 <select className="input" value={cCanal} onChange={(e) => setCCanal(e.target.value)}>
                   <option>Socios</option><option>Directo</option>
-                </select>
-              </div>
-            </label>
-            <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Pala</span>
-              <div className="inputWrap selectWrap">
-                <select className="input" value={cPalaCliente ? "cliente" : "propia"} onChange={(e) => setCPalaCliente(e.target.value === "cliente")}>
-                  <option value="propia">La pongo yo</option><option value="cliente">La trae el cliente</option>
                 </select>
               </div>
             </label>
