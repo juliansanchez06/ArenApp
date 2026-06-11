@@ -498,7 +498,7 @@ function AppInner({ user }) {
   // decisión bruta vs grillada — reacciona a las cantidades y a los precios/costos de supuestos
   const dif = netoG - netoB;
   let dec;
-  if (dif > 100) dec = { color: C.verde, txt: "CONVIENE GRILLAR", msg: `La grillada deja ${$(dif)}/tn más que la bruta a estas cantidades.` };
+  if (dif > 100) dec = { color: C.verde, txt: "CONVIENE GRILLAR", msg: `La grillada deja ${$(dif)}/tn más que la bruta con estos precios y costos.` };
   else if (dif >= -100) dec = { color: C.amarillo, txt: "EMPATE → VENDÉ BRUTA", msg: "Casi lo mismo: menos laburo y desgaste yendo en bruta." };
   else dec = { color: C.rojo, txt: "VENDÉ BRUTA", msg: `Grillar te resta ${$(-dif)}/tn. No conviene a estos precios.` };
 
@@ -1174,8 +1174,8 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <Field label="Jornal (día persona)" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" step={1000} />
               <Field label="Cargas sociales" value={cfgDraft.cargasSociales} onChange={setD("cargasSociales")} suffix="%" step={1} />
               <Field label="Bateas por jornada" value={cfgDraft.bateasPorDia} onChange={setD("bateasPorDia")} suffix="bat" step={1} />
-              <Field label="Horas pala (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" step={0.5} />
-              <Field label="Horas pala (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
+              <Field label="Horas pala/jornada (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" step={0.5} />
+              <Field label="Horas pala/jornada (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
               <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" step={50000} />
             </div>
             <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 14, background: `${C.accent}0a`, borderRadius: 10, padding: "10px 14px", lineHeight: 1.5 }}>
@@ -1212,14 +1212,14 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
             </div>
             <table style={{ width: "100%" }} className="brk">
               <tbody>
-                <tr><td>Neto bruta ({qBruta} bat.)</td><td className="num">{$(netoB)}/tn</td></tr>
-                <tr><td>Neto grillada ({qGrillada} bat.)</td><td className="num">{$(netoG)}/tn</td></tr>
+                <tr><td>Neto bruta</td><td className="num">{$(netoB)}/tn</td></tr>
+                <tr><td>Neto grillada</td><td className="num">{$(netoG)}/tn</td></tr>
                 <tr><td>Precio grillada para empatar</td><td className="num" style={{ color: C.accent }}>{$(beG)}/tn</td></tr>
                 <tr><td>Piso de la bruta (pérdida)</td><td className="num">{$(beB)}/tn</td></tr>
               </tbody>
             </table>
             <div style={{ fontSize: 12, color: C.ink2, marginTop: 12, lineHeight: 1.5 }}>
-              Movés las cantidades en la calculadora y los precios/costos en “Editar supuestos”: el semáforo se recalcula solo.
+              La decisión bruta vs. grillada depende de los precios y costos (Editar supuestos), no de la cantidad: cada batea paga su parte justa del día. Cambiá el precio de grillada o un costo y el semáforo se recalcula.
             </div>
           </Section>
 
