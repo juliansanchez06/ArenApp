@@ -32,23 +32,25 @@ const DEFAULTS = {
   variosGrillada: 15000,
   costoGrilla: 1500000,     // $ inversión grilla
   vidaGrillaAnios: 4,
-  costosFijosMes: 0,        // $ costos fijos del mes que pagás cargues o no (empleado fijo, alquiler, etc.)
+  empleadoMes: 0,           // $ sueldo del empleado por mes (con cargas) — costo fijo
+  costosFijosMes: 0,        // $ otros costos fijos del mes (alquiler, seguros, etc.)
 };
 
 /* ────────────────────────────────────────────────────────────
    MOTOR DE CÁLCULO
    ──────────────────────────────────────────────────────────── */
-// Costo de tener a la persona UNA jornada de carga (con cargas sociales).
-function personaDia(cfg) {
-  return (cfg.jornal || 0) * (1 + (cfg.cargasSociales || 0) / 100);
-}
-// Costo fijo de UNA jornada de carga del modo (pala + persona + varios). Se reparte entre las bateas del día.
+// Costos VARIABLES de una jornada de carga del modo (pala + varios). Se reparten entre las bateas del día.
+// El empleado NO va acá: es un costo fijo mensual (se paga cargues o no), se resta una vez al mes.
 function costoFijoDia(cfg, modo) {
   const horas = modo === "grillada" ? cfg.horasPalaGrillada : cfg.horasPalaBruta;
   const varios = modo === "grillada" ? cfg.variosGrillada : cfg.variosBruta;
   const gasoil = horas * cfg.palaConsumo * cfg.gasoilPrecio;
   const reserva = horas * cfg.palaReserva;
-  return { gasoil, reserva, persona: personaDia(cfg), varios, total: gasoil + reserva + personaDia(cfg) + varios };
+  return { gasoil, reserva, varios, total: gasoil + reserva + varios };
+}
+// Total de costos fijos del mes (empleado con cargas + otros fijos): se pagan cargues o no.
+function fijosMes(cfg) {
+  return (cfg.empleadoMes || 0) + (cfg.costosFijosMes || 0);
 }
 
 function calcDia(cfg, modo, bateas, palaCliente) {
@@ -66,15 +68,15 @@ function calcDia(cfg, modo, bateas, palaCliente) {
   // Si la pala la pone el cliente, no hay gasoil ni desgaste de pala.
   const gasoil = palaCliente ? 0 : f.gasoil * dil;
   const reserva = palaCliente ? 0 : f.reserva * dil;
-  const manoObra = f.persona * dil;   // el sueldo del día se reparte entre las bateas del día
   const varios = f.varios * dil;
   const amortGrilla = modo === "grillada" ? amortGrillaTn(cfg) * tn : 0;
 
-  const costoTotal = gasoil + reserva + manoObra + varios + regaliaMonto + amortGrilla;
+  // margen de CONTRIBUCIÓN (sin empleado: ese es fijo y se resta al mes)
+  const costoTotal = gasoil + reserva + varios + regaliaMonto + amortGrilla;
   const margen = ingresoNeto - costoTotal;
   return {
     tn, precio, ingresoBruto, comision, regaliaMonto, ingresoNeto,
-    gasoil, reserva, manoObra, varios, amortGrilla, costoTotal,
+    gasoil, reserva, varios, amortGrilla, costoTotal,
     margen, margenTn: tn ? margen / tn : 0, margenBatea: bateas ? margen / bateas : 0,
   };
 }
@@ -138,7 +140,7 @@ function pisoPropuesta(cfg, modo, canal, bateas, palaCliente) {
   if (factor <= 0) return Infinity;
   const bpd = cfg.bateasPorDia > 0 ? cfg.bateasPorDia : 1;
   const f = costoFijoDia(cfg, modo);
-  const fijoDia = palaCliente ? (f.persona + f.varios) : f.total; // sin pala si la trae el cliente
+  const fijoDia = palaCliente ? f.varios : f.total; // sin pala si la trae el cliente
   const fijoPorBatea = fijoDia / bpd;
   const amortBatea = modo === "grillada" ? amortGrillaTn(cfg) * tnB : 0;
   return (fijoPorBatea + amortBatea) / (tnB * factor);
@@ -758,7 +760,6 @@ function AppInner({ user }) {
       p.canal === "Socios" ? row(`− Comisión socios (${cfg.comisionSocios}%)`, "−" + fmt(e.comision), true) : row("Comisión socios", "venta directa"),
       row(`− Regalía (${cfg.regalia}%)`, "−" + fmt(e.regaliaMonto), true),
       p.palaCliente ? row("Pala", "la pone el cliente") : row("− Gasoil + reserva pala", "−" + fmt(e.gasoil + e.reserva), true),
-      row("− Mano de obra", "−" + fmt(e.manoObra), true),
       row("− Varios", "−" + fmt(e.varios), true),
       p.modo === "grillada" ? row("− Amortización grilla", "−" + fmt(e.amortGrilla), true) : "",
     ].join("");
@@ -1183,16 +1184,15 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
               <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" step={0.5} />
               <Field label="Reserva pala" value={cfgDraft.palaReserva} onChange={setD("palaReserva")} suffix="$/h" step={500} />
-              <Field label="Jornal (día persona)" value={cfgDraft.jornal} onChange={setD("jornal")} suffix="$/día" step={1000} />
-              <Field label="Cargas sociales" value={cfgDraft.cargasSociales} onChange={setD("cargasSociales")} suffix="%" step={1} />
               <Field label="Bateas por jornada" value={cfgDraft.bateasPorDia} onChange={setD("bateasPorDia")} suffix="bat" step={1} />
               <Field label="Horas pala/jornada (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" step={0.5} />
               <Field label="Horas pala/jornada (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
               <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" step={50000} />
-              <Field label="Costos fijos / mes" value={cfgDraft.costosFijosMes} onChange={setD("costosFijosMes")} suffix="$" step={10000} />
+              <Field label="Empleado / mes (con cargas)" value={cfgDraft.empleadoMes} onChange={setD("empleadoMes")} suffix="$" step={10000} />
+              <Field label="Otros fijos / mes" value={cfgDraft.costosFijosMes} onChange={setD("costosFijosMes")} suffix="$" step={10000} />
             </div>
             <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 14, background: `${C.accent}0a`, borderRadius: 10, padding: "10px 14px", lineHeight: 1.5 }}>
-              Costo de la persona por jornada: <b className="num" style={{ color: C.ink }}>{$(personaDia(normCfg(cfgDraft)))}</b> (jornal + cargas). Ese costo, más la pala y los varios del día, se reparten entre las <b>{normCfg(cfgDraft).bateasPorDia || 0}</b> bateas de la jornada — así una carga chica no se come el día entero.
+              El empleado y los otros fijos (<b className="num" style={{ color: C.ink }}>{$(fijosMes(normCfg(cfgDraft)))}/mes</b>) se pagan cargues o no, y se restan una vez al mes en la Proyección. La pala y los varios del día se reparten entre las <b>{normCfg(cfgDraft).bateasPorDia || 0}</b> bateas de la jornada (si el cliente trae la pala, esa carga no paga ni pala ni empleado).
             </div>
             <div className="row" style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.line}`, alignItems: "center", gap: 16, flexWrap: "wrap" }}>
               <button className="btn" style={{ background: cfgDirty ? C.accent : C.ink2, cursor: cfgDirty ? "pointer" : "default" }} disabled={!cfgDirty} onClick={guardarCfg}>Guardar supuestos</button>
@@ -1273,7 +1273,6 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                         <tr><td>− Comisión socios ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.comision)}</td></tr>
                         <tr><td>− Regalía ({cfg.regalia}%)</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.regaliaMonto)}</td></tr>
                         <tr><td>− Gasoil + reserva pala</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.gasoil + x.d.reserva)}</td></tr>
-                        <tr><td>− Mano de obra</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.manoObra)}</td></tr>
                         <tr><td>− Varios</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.varios)}</td></tr>
                         {x.modo === "grillada" && <tr><td>− Amortización grilla</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.amortGrilla)}</td></tr>}
                         <tr><td style={{ fontWeight: 700 }}>Margen</td><td className="num" style={{ color: x.d.margen >= 0 ? C.verde : C.rojo, fontWeight: 700 }}>{$(x.d.margen)}</td></tr>
@@ -1364,7 +1363,6 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                     : <tr><td>Comisión socios</td><td className="num" style={{ color: C.ink2 }}>venta directa</td></tr>}
                   <tr><td>− Regalía ({cfg.regalia}%)</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.regaliaMonto)}</td></tr>
                   <tr><td>− Gasoil + reserva pala</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.gasoil + prEcon.reserva)}</td></tr>
-                  <tr><td>− Mano de obra</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.manoObra)}</td></tr>
                   <tr><td>− Varios</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.varios)}</td></tr>
                   {prModo === "grillada" && <tr><td>− Amortización grilla</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.amortGrilla)}</td></tr>}
                   <tr><td style={{ fontWeight: 700 }}>Margen (te queda a vos)</td><td className="num" style={{ color: prEcon.margen >= 0 ? C.verde : C.rojo, fontWeight: 700 }}>{$(prEcon.margen)}</td></tr>
@@ -1423,7 +1421,6 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                                   : <tr><td>Comisión socios</td><td className="num" style={{ color: C.ink2 }}>venta directa</td></tr>}
                                 <tr><td>− Regalía</td><td className="num" style={{ color: C.rojo }}>−{N(pe.regaliaMonto)}</td></tr>
                                 <tr><td>− Gasoil + reserva pala</td><td className="num" style={{ color: C.rojo }}>−{N(pe.gasoil + pe.reserva)}</td></tr>
-                                <tr><td>− Mano de obra</td><td className="num" style={{ color: C.rojo }}>−{N(pe.manoObra)}</td></tr>
                                 <tr><td>− Varios</td><td className="num" style={{ color: C.rojo }}>−{N(pe.varios)}</td></tr>
                                 {p.modo === "grillada" && <tr><td>− Amortización grilla</td><td className="num" style={{ color: C.rojo }}>−{N(pe.amortGrilla)}</td></tr>}
                                 <tr><td style={{ fontWeight: 700 }}>Margen (te queda a vos)</td><td className="num" style={{ color: pe.margen >= 0 ? C.verde : C.rojo, fontWeight: 700 }}>{$(pe.margen)}</td></tr>
@@ -1762,15 +1759,26 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
             <Kpi label="Por mes" value={$(proyMes)} sub="margen de contribución" color={C.accent} />
             <Kpi label="Por año" value={$(proyAnio)} sub="12 meses" color={C.accent} />
           </div>
-          {cfg.costosFijosMes > 0 && (
-            <table style={{ width: "100%", marginTop: 16 }} className="brk">
-              <tbody>
-                <tr><td>Margen de contribución del mes</td><td className="num">{$(proyMes)}</td></tr>
-                <tr><td>− Costos fijos del mes (los pagás cargues o no)</td><td className="num" style={{ color: C.rojo }}>−{N(cfg.costosFijosMes)}</td></tr>
-                <tr><td style={{ fontWeight: 700 }}>Resultado del mes</td><td className="num" style={{ fontWeight: 700, color: (proyMes - cfg.costosFijosMes) >= 0 ? C.verde : C.rojo }}>{$(proyMes - cfg.costosFijosMes)}</td></tr>
-              </tbody>
-            </table>
-          )}
+          {fijosMes(cfg) > 0 && (() => {
+            const fm = fijosMes(cfg);
+            const bat = qBruta + qGrillada;
+            const contribPorBatea = bat > 0 ? totalMargenMes / bat : 0;
+            const minBateas = contribPorBatea > 0 ? Math.ceil(fm / contribPorBatea) : Infinity;
+            return (
+              <>
+                <table style={{ width: "100%", marginTop: 16 }} className="brk">
+                  <tbody>
+                    <tr><td>Margen de contribución del mes</td><td className="num">{$(proyMes)}</td></tr>
+                    <tr><td>− Empleado + otros fijos (los pagás cargues o no)</td><td className="num" style={{ color: C.rojo }}>−{N(fm)}</td></tr>
+                    <tr><td style={{ fontWeight: 700 }}>Resultado del mes</td><td className="num" style={{ fontWeight: 700, color: (proyMes - fm) >= 0 ? C.verde : C.rojo }}>{$(proyMes - fm)}</td></tr>
+                  </tbody>
+                </table>
+                <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 10, background: `${C.accent}0a`, borderRadius: 10, padding: "10px 14px" }}>
+                  Para cubrir los costos fijos necesitás cargar al menos <b className="num" style={{ color: C.ink }}>{isFinite(minBateas) ? minBateas : "—"}</b> bateas/mes (con el mix actual). De ahí para arriba, ganás.
+                </div>
+              </>
+            );
+          })()}
         </Section>
 
         {/* RESPALDO */}
