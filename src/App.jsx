@@ -1285,12 +1285,22 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
             )}
 
             <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginTop: 14, paddingTop: 14, borderTop: `2px solid ${C.ink}` }}>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>Margen del mes</span>
-              <span className="num" style={{ fontSize: 26, color: totalMargenMes >= 0 ? C.verde : C.rojo }}>{$(totalMargenMes)}</span>
+              <span style={{ fontWeight: 700, fontSize: 15 }}>Margen de contribución</span>
+              <span className="num" style={{ fontSize: 22, color: totalMargenMes >= 0 ? C.verde : C.rojo }}>{$(totalMargenMes)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", color: C.ink2, fontSize: 12.5, marginTop: 6 }}>
               <span>{N(totalTnMes)} tn en total</span><span>{qBruta + qGrillada} bateas</span>
             </div>
+            {/* Resultado del mes: la contribución MENOS los fijos (se pagan cargues o no) */}
+            <table style={{ width: "100%", marginTop: 12 }} className="brk">
+              <tbody>
+                <tr><td>− Empleado + fijos del mes</td><td className="num" style={{ color: C.rojo }}>−{N(fijosMes(cfg))}</td></tr>
+                <tr><td style={{ fontWeight: 700, fontSize: 15 }}>Resultado del mes</td><td className="num" style={{ fontSize: 22, color: (totalMargenMes - fijosMes(cfg)) >= 0 ? C.verde : C.rojo }}>{$(totalMargenMes - fijosMes(cfg))}</td></tr>
+              </tbody>
+            </table>
+            {fijosMes(cfg) === 0 && (
+              <div style={{ fontSize: 12, color: C.ink2, marginTop: 6 }}>Cargá "Empleado / mes" y "Otros fijos" en Editar supuestos para ver el resultado real.</div>
+            )}
 
             {/* Avance del objetivo según propuestas guardadas */}
             <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${C.line}` }}>
