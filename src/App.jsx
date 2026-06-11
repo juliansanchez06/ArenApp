@@ -225,10 +225,20 @@ const SECTION_COLORS = {
   "Datos": "#3f5560",        // pizarra
 };
 
+// Tono del fondo de cada sección, intercalado claro/oscuro (misma paleta arena).
+const TONO_CLARO = "#efe7d6";
+const TONO_OSCURO = "#d9ccac";
+const SECTION_TONE = {
+  "Decisión": TONO_CLARO, "Calculadora": TONO_OSCURO, "Propuesta": TONO_CLARO, "Cartera": TONO_OSCURO,
+  "Agenda": TONO_CLARO, "Operación": TONO_OSCURO, "Resumen": TONO_CLARO, "Calendario": TONO_OSCURO,
+  "Tablero": TONO_CLARO, "Proyección": TONO_OSCURO, "Parámetros": TONO_CLARO, "Datos": TONO_CLARO,
+};
+
 function Section({ tag, title, right, children, id }) {
   const col = SECTION_COLORS[tag] || C.accent;
+  const bg = SECTION_TONE[tag] || C.bg;
   return (
-    <section className="card" id={id}>
+    <section className="card" id={id} style={{ background: bg }}>
       <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 18 }}>
         <div className="row" style={{ gap: 10, alignItems: "center" }}>
           <span style={{ width: 9, height: 9, background: col, display: "inline-block", borderRadius: 2 }} />
@@ -391,7 +401,7 @@ function AppInner({ user }) {
   const [fModo, setFModo] = useState("bruta");
   const [fBateas, setFBateas] = useState(1);
   const [fClienteId, setFClienteId] = useState("");
-  const [fCanal, setFCanal] = useState("Socios");
+  const [fCanal, setFCanal] = useState("Intermediario");
   const [fPalaCliente, setFPalaCliente] = useState(false);
   const [editId, setEditId] = useState(null);        // id del registro en edición (null = alta nueva)
 
@@ -411,7 +421,7 @@ function AppInner({ user }) {
   const [cNombre, setCNombre] = useState("");
   const [cLocalidad, setCLocalidad] = useState("");
   const [cTel, setCTel] = useState("");
-  const [cCanal, setCCanal] = useState("Socios");
+  const [cCanal, setCCanal] = useState("Intermediario");
 
   // form de propuesta a analizar
   const [prQuien, setPrQuien] = useState("");
@@ -596,7 +606,7 @@ function AppInner({ user }) {
   if (cfg.precioGrillada === cfg.precioBruta)
     alertas.push({ color: C.amarillo, t: "Falta confirmar precio de grillada", d: `Llamá al corralón. Grillar conviene solo desde ~${$(beG)}/tn.` });
   if (stats.tnMes > 0 && stats.pctDir < 20)
-    alertas.push({ color: C.amarillo, t: "Dependés de los socios", d: `Solo ${N(stats.pctDir)}% de las ventas del mes son directas. Cada tn directa recupera ${$(cfg.precioBruta * cfg.comisionSocios / 100)}/tn.` });
+    alertas.push({ color: C.amarillo, t: "Dependés del intermediario", d: `Solo ${N(stats.pctDir)}% de las ventas del mes son directas. Cada tn directa recupera ${$(cfg.precioBruta * cfg.comisionSocios / 100)}/tn.` });
   if (objMes > 0 && stats.batMes >= objMes)
     alertas.push({ color: C.verde, t: "Objetivo del mes cumplido", d: `${stats.batMes} de ${objMes} bateas este mes. Cada batea extra deja casi puro margen.` });
 
@@ -670,7 +680,7 @@ function AppInner({ user }) {
 
   function resetFormCarga() {
     setEditId(null); setFFecha(todayISO()); setFModo("bruta");
-    setFBateas(1); setFClienteId(""); setFCanal("Socios"); setFPalaCliente(false);
+    setFBateas(1); setFClienteId(""); setFCanal("Intermediario"); setFPalaCliente(false);
   }
   function registrar() {
     const b = parseFloat(fBateas) || 0;
@@ -694,7 +704,7 @@ function AppInner({ user }) {
   function editar(r) {
     setEditId(r.id);
     setFFecha(r.fecha); setFModo(r.modo); setFBateas(r.bateas);
-    setFClienteId(r.clienteId || ""); setFCanal(r.canal || "Socios"); setFPalaCliente(!!r.palaCliente);
+    setFClienteId(r.clienteId || ""); setFCanal(r.canal || "Intermediario"); setFPalaCliente(!!r.palaCliente);
     try { document.getElementById("form-registro")?.scrollIntoView({ behavior: "smooth", block: "center" }); } catch {}
   }
   // borrado con deshacer: saca el item y arma el toast; si no se deshace en 6s, queda firme
@@ -763,7 +773,7 @@ function AppInner({ user }) {
     const row = (l, v, neg) => `<tr><td>${l}</td><td style="text-align:right;font-family:monospace;${neg ? "color:#a82c20" : ""}">${v}</td></tr>`;
     const filas = [
       row("Ingreso bruto", fmt(e.ingresoBruto)),
-      p.canal === "Socios" ? row(`− Comisión socios (${cfg.comisionSocios}%)`, "−" + fmt(e.comision), true) : row("Comisión socios", "venta directa"),
+      p.canal !== "Directo" ? row(`− Comisión intermediario (${cfg.comisionSocios}%)`, "−" + fmt(e.comision), true) : row("Comisión intermediario", "venta directa"),
       row(`− Regalía (${cfg.regalia}%)`, "−" + fmt(e.regaliaMonto), true),
       p.palaCliente ? row("Pala", "la pone el cliente") : row("− Gasoil + reserva pala", "−" + fmt(e.gasoil + e.reserva), true),
       row("− Varios", "−" + fmt(e.varios), true),
@@ -779,7 +789,7 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
 .vd{display:inline-block;padding:7px 16px;border-radius:20px;font-weight:bold;font-size:14px;margin-top:12px}
 .ft{color:#857a6e;font-size:11px;margin-top:26px}</style></head><body>
 <h1>EL RETIRO</h1><div class="sub">Análisis de propuesta · Arenera · Sol de Julio</div>
-<div class="meta"><b>${p.quien || "—"}</b> &middot; ${p.fecha}<br>${p.bateas} bateas &middot; ${Math.round(p.tn)} tn &middot; arena ${p.modo} &middot; venta ${p.canal} &middot; precio ${fmt(p.precio)}/tn</div>
+<div class="meta"><b>${p.quien || "—"}</b> &middot; ${p.fecha}<br>${p.bateas} bateas &middot; ${Math.round(p.tn)} tn &middot; arena ${p.modo} &middot; venta ${p.canal === "Directo" ? "Directo" : "Intermediario"} &middot; precio ${fmt(p.precio)}/tn</div>
 <table><tbody>${filas}<tr class="tot"><td>Margen (te queda a vos)</td><td style="text-align:right;font-family:monospace;color:${e.margen >= 0 ? "#1c6b3e" : "#a82c20"}">${fmt(e.margen)}</td></tr></tbody></table>
 <table><tbody>${row("Margen por tonelada", fmt(e.margenTn) + "/tn")}${row("Piso para no perder", fmt(piso) + "/tn")}</tbody></table>
 <div class="vd" style="background:${vCol}22;color:${vCol}">${p.veredicto || "—"}</div>
@@ -797,7 +807,7 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
     setProgramadas((ps) => [
       ...ps,
       { id: newId(), fecha: pFecha, clienteId: pClienteId, cliente: cl ? cl.nombre : "—",
-        canal: cl ? cl.canal : "Socios", bateas: b, modo: pModo, nota: pNota.trim(), palaCliente: pPalaCliente },
+        canal: cl ? cl.canal : "Intermediario", bateas: b, modo: pModo, nota: pNota.trim(), palaCliente: pPalaCliente },
     ]);
     setPBateas(1); setPNota(""); setPClienteId(""); setPPalaCliente(false);
   }
@@ -835,7 +845,7 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
       ...cs,
       { id: newId(), nombre: cNombre.trim(), localidad: cLocalidad.trim(), tel: cTel.trim(), canal: cCanal },
     ]);
-    setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios");
+    setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Intermediario");
   }
   function borrarCliente(id) {
     const idx = clientes.findIndex((c) => c.id === id);
@@ -882,7 +892,7 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
   }
   function descargarCSV(nombre, filas) {
     const sep = ";"; // separador apto para Excel en español
-    const head = ["Período", "Bateas bruta", "Bateas grillada", "Bateas total", "Tn bruta", "Tn grillada", "Tn total", "Ingreso bruto", "Comisión socios", "Costos", "Margen", "Tn directas", "% directas"];
+    const head = ["Período", "Bateas bruta", "Bateas grillada", "Bateas total", "Tn bruta", "Tn grillada", "Tn total", "Ingreso bruto", "Comisión intermediario", "Costos", "Margen", "Tn directas", "% directas"];
     const lineas = [head.join(sep)];
     const tot = { batB: 0, batG: 0, tnB: 0, tnG: 0, ing: 0, com: 0, costo: 0, margen: 0, tnDir: 0 };
     const fila = (label, f) => {
@@ -944,7 +954,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
 .tot td{border-top:2px solid #211b17;border-bottom:0;font-weight:bold}
 .ft{color:#857a6e;font-size:11px;margin-top:20px}</style></head><body>
 <h1>EL RETIRO</h1><div class="sub">Resumen ${tipo} · Arenera · Sol de Julio</div>
-<table><thead><tr><th>Período</th><th class="r">Bateas</th><th class="r">Tn</th><th class="r">Ingreso</th><th class="r">Socios</th><th class="r">Margen</th></tr></thead>
+<table><thead><tr><th>Período</th><th class="r">Bateas</th><th class="r">Tn</th><th class="r">Ingreso</th><th class="r">Comisión</th><th class="r">Margen</th></tr></thead>
 <tbody>${trs}${totRow}</tbody></table>
 <div class="ft">Generado con El Retiro · ${new Date().toLocaleDateString("es-AR")}</div>
 <script>window.onload=function(){window.print()}<\/script></body></html>`;
@@ -966,7 +976,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           fecha: r.fecha, modo: r.modo, bateas: b,
           clienteId: r.clienteId != null ? r.clienteId : "",
           cliente: typeof r.cliente === "string" && r.cliente ? r.cliente : "—",
-          canal: r.canal === "Directo" ? "Directo" : "Socios",
+          canal: r.canal === "Directo" ? "Directo" : "Intermediario",
           palaCliente: !!r.palaCliente,
           ...(r.econ && typeof r.econ === "object" ? { econ: r.econ } : {}),
         });
@@ -983,7 +993,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           nombre: c.nombre.trim(),
           localidad: typeof c.localidad === "string" ? c.localidad : "",
           tel: typeof c.tel === "string" ? c.tel : "",
-          canal: c.canal === "Directo" ? "Directo" : "Socios",
+          canal: c.canal === "Directo" ? "Directo" : "Intermediario",
         });
       } else descartados++;
     }
@@ -1001,7 +1011,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           modo: p.modo === "grillada" ? "grillada" : "bruta",
           clienteId: p.clienteId != null ? p.clienteId : "",
           cliente: typeof p.cliente === "string" && p.cliente ? p.cliente : "—",
-          canal: p.canal === "Directo" ? "Directo" : "Socios",
+          canal: p.canal === "Directo" ? "Directo" : "Intermediario",
           nota: typeof p.nota === "string" ? p.nota : "",
           palaCliente: !!p.palaCliente,
         });
@@ -1181,7 +1191,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
             <div className="grid-3" style={{ rowGap: 16 }}>
               <Field label="Precio bruta" value={cfgDraft.precioBruta} onChange={setD("precioBruta")} suffix="$/tn" step={100} />
               <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" step={100} />
-              <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
+              <Field label="Comisión intermediario" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
               <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
               <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
               <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
@@ -1212,7 +1222,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           <Kpi label="Margen del mes" value={$(stats.margenMes)} sub={`${N(stats.tnMes)} tn cargadas`} color={semMar} />
           <Kpi label="Ventas directas" value={`${N(stats.pctDir)}%`} sub="cuanto más alto, más recuperás del 30%" color={semDir} />
           <Kpi label="Bateas este mes" value={`${stats.batMes} / ${objMes}`} sub="objetivo mensual" color={semBat} />
-          <Kpi label="Comisión socios (mes)" value={$(stats.comMes)} sub="tu mayor costo" color={C.accent} />
+          <Kpi label="Comisión intermediario (mes)" value={$(stats.comMes)} sub="tu mayor costo" color={C.accent} />
         </div>
 
         {/* DECISIÓN + CALCULADORA */}
@@ -1273,7 +1283,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                     <table style={{ width: "100%" }} className="brk">
                       <tbody>
                         <tr><td>Ingreso bruto</td><td className="num">{$(x.d.ingresoBruto)}</td></tr>
-                        <tr><td>− Comisión socios ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.comision)}</td></tr>
+                        <tr><td>− Comisión intermediario ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.comision)}</td></tr>
                         <tr><td>− Regalía ({cfg.regalia}%)</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.regaliaMonto)}</td></tr>
                         <tr><td>− Gasoil + reserva pala</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.gasoil + x.d.reserva)}</td></tr>
                         <tr><td>− Varios</td><td className="num" style={{ color: C.rojo }}>−{N(x.d.varios)}</td></tr>
@@ -1348,7 +1358,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
             </label>
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
-              <div className="inputWrap selectWrap"><select className="input" value={prCanal} onChange={(e) => setPrCanal(e.target.value)}><option>Directo</option><option>Socios</option></select></div>
+              <div className="inputWrap selectWrap"><select className="input" value={prCanal} onChange={(e) => setPrCanal(e.target.value)}><option>Directo</option><option>Intermediario</option></select></div>
             </label>
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Pala</span>
@@ -1371,9 +1381,9 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <table style={{ width: "100%" }} className="brk">
                 <tbody>
                   <tr><td>Ingreso bruto ({N(prEcon.tn)} tn × {$(prPrecioNum)})</td><td className="num">{$(prEcon.ingresoBruto)}</td></tr>
-                  {prCanal === "Socios"
-                    ? <tr><td>− Comisión socios ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.comision)}</td></tr>
-                    : <tr><td>Comisión socios</td><td className="num" style={{ color: C.ink2 }}>venta directa</td></tr>}
+                  {prCanal !== "Directo"
+                    ? <tr><td>− Comisión intermediario ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.comision)}</td></tr>
+                    : <tr><td>Comisión intermediario</td><td className="num" style={{ color: C.ink2 }}>venta directa</td></tr>}
                   <tr><td>− Regalía ({cfg.regalia}%)</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.regaliaMonto)}</td></tr>
                   <tr><td>− Gasoil + reserva pala</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.gasoil + prEcon.reserva)}</td></tr>
                   <tr><td>− Varios</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.varios)}</td></tr>
@@ -1412,7 +1422,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                         <td data-label="Fecha" className="num" style={{ fontSize: 12.5 }}>{p.fecha}</td>
                         <td data-label="Quién">{p.quien}</td>
                         <td data-label="Modo"><span className="pill" style={{ background: p.modo === "grillada" ? `${C.accent}1a` : `${C.ink}0d`, color: p.modo === "grillada" ? C.accent : C.ink }}>{p.modo}</span></td>
-                        <td data-label="Canal"><span className="pill" style={{ background: p.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: p.canal === "Directo" ? C.verde : C.amarillo }}>{p.canal}</span></td>
+                        <td data-label="Canal"><span className="pill" style={{ background: p.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: p.canal === "Directo" ? C.verde : C.amarillo }}>{p.canal === "Directo" ? "Directo" : "Intermediario"}</span></td>
                         <td data-label="Precio" className="num" style={{ textAlign: "right" }}>{$(p.precio)}</td>
                         <td data-label="Tn" className="num" style={{ textAlign: "right" }}>{N(p.tn)}</td>
                         <td data-label="Margen" className="num" style={{ textAlign: "right", color: p.margen >= 0 ? C.verde : C.rojo }}>{$(p.margen)}</td>
@@ -1429,9 +1439,9 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                             <table style={{ width: "100%" }} className="brk">
                               <tbody>
                                 <tr><td>Ingreso bruto ({N(pe.tn)} tn × {$(p.precio)})</td><td className="num">{$(pe.ingresoBruto)}</td></tr>
-                                {p.canal === "Socios"
-                                  ? <tr><td>− Comisión socios</td><td className="num" style={{ color: C.rojo }}>−{N(pe.comision)}</td></tr>
-                                  : <tr><td>Comisión socios</td><td className="num" style={{ color: C.ink2 }}>venta directa</td></tr>}
+                                {p.canal !== "Directo"
+                                  ? <tr><td>− Comisión intermediario</td><td className="num" style={{ color: C.rojo }}>−{N(pe.comision)}</td></tr>
+                                  : <tr><td>Comisión intermediario</td><td className="num" style={{ color: C.ink2 }}>venta directa</td></tr>}
                                 <tr><td>− Regalía</td><td className="num" style={{ color: C.rojo }}>−{N(pe.regaliaMonto)}</td></tr>
                                 <tr><td>− Gasoil + reserva pala</td><td className="num" style={{ color: C.rojo }}>−{N(pe.gasoil + pe.reserva)}</td></tr>
                                 <tr><td>− Varios</td><td className="num" style={{ color: C.rojo }}>−{N(pe.varios)}</td></tr>
@@ -1480,7 +1490,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
               <div className="inputWrap selectWrap">
                 <select className="input" value={cCanal} onChange={(e) => setCCanal(e.target.value)}>
-                  <option>Socios</option><option>Directo</option>
+                  <option>Intermediario</option><option>Directo</option>
                 </select>
               </div>
             </label>
@@ -1498,7 +1508,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                     <tr key={c.id}>
                       <td data-label="Cliente" style={{ fontWeight: 600 }}>{c.nombre}</td>
                       <td data-label="Localidad" style={{ color: C.ink2 }}>{c.localidad || "—"}</td>
-                      <td data-label="Canal"><span className="pill" style={{ background: c.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: c.canal === "Directo" ? C.verde : C.amarillo }}>{c.canal}</span></td>
+                      <td data-label="Canal"><span className="pill" style={{ background: c.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: c.canal === "Directo" ? C.verde : C.amarillo }}>{c.canal === "Directo" ? "Directo" : "Intermediario"}</span></td>
                       <td data-label="Tel" className="num" style={{ fontSize: 12.5 }}>{c.tel || "—"}</td>
                       <td data-label="Tn total" className="num" style={{ textAlign: "right" }}>{N(c.tn)}</td>
                       <td data-label="Margen" className="num" style={{ textAlign: "right", color: c.margen > 0 ? C.verde : C.ink2 }}>{$(c.margen)}</td>
@@ -1621,7 +1631,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
               <div className="inputWrap selectWrap">
                 <select className="input" value={fCanal} onChange={(e) => setFCanal(e.target.value)}>
-                  <option>Socios</option><option>Directo</option>
+                  <option>Intermediario</option><option>Directo</option>
                 </select>
               </div>
             </label>
@@ -1655,7 +1665,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                         <td data-label="Bateas" className="num">{r.bateas}</td>
                         <td data-label="Tn" className="num">{N(c.tn)}</td>
                         <td data-label="Cliente">{r.cliente}</td>
-                        <td data-label="Canal"><span className="pill" style={{ background: r.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: r.canal === "Directo" ? C.verde : C.amarillo }}>{r.canal}</span></td>
+                        <td data-label="Canal"><span className="pill" style={{ background: r.canal === "Directo" ? `${C.verde}1a` : `${C.amarillo}1a`, color: r.canal === "Directo" ? C.verde : C.amarillo }}>{r.canal === "Directo" ? "Directo" : "Intermediario"}</span></td>
                         <td data-label="Margen" className="num" style={{ textAlign: "right", color: c.margen >= 0 ? C.verde : C.rojo }}>{$(c.margen)}</td>
                         <td data-label="" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                           <button className="del" title="Editar" aria-label="Editar carga" style={{ marginRight: 4, color: r.id === editId ? C.accent : undefined }} onClick={() => editar(r)}>✎</button>
@@ -1683,7 +1693,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table className="reg">
-                <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Bateas</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Ingreso</th><th style={{ textAlign: "right" }}>Socios</th><th style={{ textAlign: "right" }}>Margen</th></tr></thead>
+                <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Bateas</th><th style={{ textAlign: "right" }}>Tn</th><th style={{ textAlign: "right" }}>Ingreso</th><th style={{ textAlign: "right" }}>Comisión</th><th style={{ textAlign: "right" }}>Margen</th></tr></thead>
                 <tbody>
                   {resumenMeses.map((m) => (
                     <tr key={m.key}>
@@ -1691,7 +1701,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                       <td data-label="Bateas" className="num" style={{ textAlign: "right" }}>{m.bateas}</td>
                       <td data-label="Tn" className="num" style={{ textAlign: "right" }}>{N(m.tn)}</td>
                       <td data-label="Ingreso" className="num" style={{ textAlign: "right" }}>{$(m.bruto)}</td>
-                      <td data-label="Socios" className="num" style={{ textAlign: "right", color: C.rojo }}>−{N(m.comision)}</td>
+                      <td data-label="Comisión" className="num" style={{ textAlign: "right", color: C.rojo }}>−{N(m.comision)}</td>
                       <td data-label="Margen" className="num" style={{ textAlign: "right", color: m.margen >= 0 ? C.verde : C.rojo, fontWeight: 700 }}>{$(m.margen)}</td>
                     </tr>
                   ))}
