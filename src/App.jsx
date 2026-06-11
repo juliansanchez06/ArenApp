@@ -32,6 +32,7 @@ const DEFAULTS = {
   variosGrillada: 15000,
   costoGrilla: 1500000,     // $ inversión grilla
   vidaGrillaAnios: 4,
+  costosFijosMes: 0,        // $ costos fijos del mes que pagás cargues o no (empleado fijo, alquiler, etc.)
 };
 
 /* ────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ function costoFijoDia(cfg, modo) {
   return { gasoil, reserva, persona: personaDia(cfg), varios, total: gasoil + reserva + personaDia(cfg) + varios };
 }
 
-function calcDia(cfg, modo, bateas) {
+function calcDia(cfg, modo, bateas, palaCliente) {
   const tn = bateas * cfg.tnPorBatea;
   const precio = modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta;
   const ingresoBruto = tn * precio;
@@ -62,8 +63,9 @@ function calcDia(cfg, modo, bateas) {
   const bpd = cfg.bateasPorDia > 0 ? cfg.bateasPorDia : 1;
   const dil = bateas / bpd;
   const f = costoFijoDia(cfg, modo);
-  const gasoil = f.gasoil * dil;
-  const reserva = f.reserva * dil;
+  // Si la pala la pone el cliente, no hay gasoil ni desgaste de pala.
+  const gasoil = palaCliente ? 0 : f.gasoil * dil;
+  const reserva = palaCliente ? 0 : f.reserva * dil;
   const manoObra = f.persona * dil;   // el sueldo del día se reparte entre las bateas del día
   const varios = f.varios * dil;
   const amortGrilla = modo === "grillada" ? amortGrillaTn(cfg) * tn : 0;
@@ -117,25 +119,27 @@ function breakEvenBruta(cfg) {
    Reutiliza el motor: pisa el precio con el ofrecido y, si es venta
    directa, anula la comisión de socios. Calcula con TUS costos.
    ──────────────────────────────────────────────────────────── */
-function analizarPropuesta(cfg, modo, canal, precio, bateas) {
+function analizarPropuesta(cfg, modo, canal, precio, bateas, palaCliente) {
   const ov = {
     ...cfg,
     precioBruta: precio,
     precioGrillada: precio,
     comisionSocios: canal === "Directo" ? 0 : cfg.comisionSocios,
   };
-  return calcDia(ov, modo, bateas);
+  return calcDia(ov, modo, bateas, palaCliente);
 }
 
 // Precio mínimo por tn para no perder (margen = 0). Costo del día repartido por batea.
-function pisoPropuesta(cfg, modo, canal, bateas) {
+function pisoPropuesta(cfg, modo, canal, bateas, palaCliente) {
   const tnB = cfg.tnPorBatea;
   if (tnB <= 0) return Infinity;
   const com = canal === "Directo" ? 0 : cfg.comisionSocios;
   const factor = 1 - com / 100 - cfg.regalia / 100;
   if (factor <= 0) return Infinity;
   const bpd = cfg.bateasPorDia > 0 ? cfg.bateasPorDia : 1;
-  const fijoPorBatea = costoFijoDia(cfg, modo).total / bpd;
+  const f = costoFijoDia(cfg, modo);
+  const fijoDia = palaCliente ? (f.persona + f.varios) : f.total; // sin pala si la trae el cliente
+  const fijoPorBatea = fijoDia / bpd;
   const amortBatea = modo === "grillada" ? amortGrillaTn(cfg) * tnB : 0;
   return (fijoPorBatea + amortBatea) / (tnB * factor);
 }
@@ -386,6 +390,7 @@ function AppInner({ user }) {
   const [fBateas, setFBateas] = useState(1);
   const [fClienteId, setFClienteId] = useState("");
   const [fCanal, setFCanal] = useState("Socios");
+  const [fPalaCliente, setFPalaCliente] = useState(false);
   const [editId, setEditId] = useState(null);        // id del registro en edición (null = alta nueva)
 
   // deshacer borrados (toast)
@@ -398,12 +403,14 @@ function AppInner({ user }) {
   const [pBateas, setPBateas] = useState(1);
   const [pModo, setPModo] = useState("bruta");
   const [pNota, setPNota] = useState("");
+  const [pPalaCliente, setPPalaCliente] = useState(false);
 
   // form de cliente
   const [cNombre, setCNombre] = useState("");
   const [cLocalidad, setCLocalidad] = useState("");
   const [cTel, setCTel] = useState("");
   const [cCanal, setCCanal] = useState("Socios");
+  const [cPalaCliente, setCPalaCliente] = useState(false);
 
   // form de propuesta a analizar
   const [prQuien, setPrQuien] = useState("");
@@ -412,6 +419,7 @@ function AppInner({ user }) {
   const [prCanal, setPrCanal] = useState("Directo");
   const [prBateas, setPrBateas] = useState(1);
   const [prTn, setPrTn] = useState(DEFAULTS.tnPorBatea);
+  const [prPalaCliente, setPrPalaCliente] = useState(false);
   const [propExp, setPropExp] = useState({});       // {id: true} propuestas desplegadas
   const [verDesgloseCalc, setVerDesgloseCalc] = useState(false); // desglose de costos en la calculadora
 
@@ -483,7 +491,7 @@ function AppInner({ user }) {
 
   // Economía de un registro: usa el snapshot inmutable guardado al cargar (r.econ).
   // Para registros viejos sin snapshot, cae a recalcular con cfg actual (compatibilidad).
-  const econDe = (r) => (r && r.econ ? r.econ : calcDia(cfg, r.modo, r.bateas));
+  const econDe = (r) => (r && r.econ ? r.econ : calcDia(cfg, r.modo, r.bateas, r.palaCliente));
 
   // Planificador del mes: cálculo por modo a las cantidades elegidas
   const diaB = useMemo(() => calcDia(cfg, "bruta", qBruta), [cfg, qBruta]);
@@ -506,12 +514,12 @@ function AppInner({ user }) {
   const prPrecioNum = parseFloat(prPrecio) || 0;
   const prBateasNum = parseFloat(prBateas) || 0;
   const prEcon = useMemo(
-    () => analizarPropuesta(cfg, prModo, prCanal, prPrecioNum, prBateasNum),
-    [cfg, prModo, prCanal, prPrecioNum, prBateasNum]
+    () => analizarPropuesta(cfg, prModo, prCanal, prPrecioNum, prBateasNum, prPalaCliente),
+    [cfg, prModo, prCanal, prPrecioNum, prBateasNum, prPalaCliente]
   );
   const prPiso = useMemo(
-    () => pisoPropuesta(cfg, prModo, prCanal, prBateasNum),
-    [cfg, prModo, prCanal, prBateasNum]
+    () => pisoPropuesta(cfg, prModo, prCanal, prBateasNum, prPalaCliente),
+    [cfg, prModo, prCanal, prBateasNum, prPalaCliente]
   );
   let prDec;
   if (prPrecioNum <= 0 || prBateasNum <= 0) {
@@ -654,7 +662,7 @@ function AppInner({ user }) {
 
   function resetFormCarga() {
     setEditId(null); setFFecha(todayISO()); setFModo("bruta");
-    setFBateas(1); setFClienteId(""); setFCanal("Socios");
+    setFBateas(1); setFClienteId(""); setFCanal("Socios"); setFPalaCliente(false);
   }
   function registrar() {
     const b = parseFloat(fBateas) || 0;
@@ -663,7 +671,8 @@ function AppInner({ user }) {
     const datos = {
       fecha: fFecha, modo: fModo, bateas: b,
       clienteId: fClienteId, cliente: cl ? cl.nombre : "—", canal: fCanal,
-      econ: calcDia(cfg, fModo, b),
+      palaCliente: fPalaCliente,
+      econ: calcDia(cfg, fModo, b, fPalaCliente),
     };
     if (editId) {
       // edición: actualiza en su lugar y vuelve a modo alta
@@ -677,7 +686,7 @@ function AppInner({ user }) {
   function editar(r) {
     setEditId(r.id);
     setFFecha(r.fecha); setFModo(r.modo); setFBateas(r.bateas);
-    setFClienteId(r.clienteId || ""); setFCanal(r.canal || "Socios");
+    setFClienteId(r.clienteId || ""); setFCanal(r.canal || "Socios"); setFPalaCliente(!!r.palaCliente);
     try { document.getElementById("form-registro")?.scrollIntoView({ behavior: "smooth", block: "center" }); } catch {}
   }
   // borrado con deshacer: saca el item y arma el toast; si no se deshace en 6s, queda firme
@@ -719,12 +728,12 @@ function AppInner({ user }) {
     const precio = parseFloat(prPrecio) || 0;
     const b = parseFloat(prBateas) || 0;
     if (precio <= 0 || b <= 0) return;
-    const econ = analizarPropuesta(cfg, prModo, prCanal, precio, b);
-    const piso = pisoPropuesta(cfg, prModo, prCanal, b);
+    const econ = analizarPropuesta(cfg, prModo, prCanal, precio, b, prPalaCliente);
+    const piso = pisoPropuesta(cfg, prModo, prCanal, b, prPalaCliente);
     const veredicto = precio < piso ? "No conviene" : precio < piso * 1.12 ? "Al límite" : "Conviene";
     setPropuestas((ps) => [
       { id: newId(), fecha: todayISO(), quien: prQuien.trim() || "—",
-        modo: prModo, canal: prCanal, precio, bateas: b, tn: econ.tn,
+        modo: prModo, canal: prCanal, precio, bateas: b, tn: econ.tn, palaCliente: prPalaCliente,
         margen: econ.margen, margenTn: econ.margenTn, piso, veredicto, econ },
       ...ps,
     ]);
@@ -739,8 +748,8 @@ function AppInner({ user }) {
   }
   // Exporta una propuesta a PDF abriendo el diálogo de impresión (Guardar como PDF). Sin librerías.
   function exportarPropuestaPDF(p) {
-    const e = p.econ || analizarPropuesta(cfg, p.modo, p.canal, p.precio, p.bateas);
-    const piso = p.piso != null ? p.piso : pisoPropuesta(cfg, p.modo, p.canal, p.bateas);
+    const e = p.econ || analizarPropuesta(cfg, p.modo, p.canal, p.precio, p.bateas, p.palaCliente);
+    const piso = p.piso != null ? p.piso : pisoPropuesta(cfg, p.modo, p.canal, p.bateas, p.palaCliente);
     const fmt = (n) => (isFinite(n) ? "$" + Math.round(n).toLocaleString("es-AR") : "—");
     const vCol = p.veredicto === "Conviene" ? "#1c6b3e" : p.veredicto === "Al límite" ? "#8a6010" : "#a82c20";
     const row = (l, v, neg) => `<tr><td>${l}</td><td style="text-align:right;font-family:monospace;${neg ? "color:#a82c20" : ""}">${v}</td></tr>`;
@@ -748,7 +757,7 @@ function AppInner({ user }) {
       row("Ingreso bruto", fmt(e.ingresoBruto)),
       p.canal === "Socios" ? row(`− Comisión socios (${cfg.comisionSocios}%)`, "−" + fmt(e.comision), true) : row("Comisión socios", "venta directa"),
       row(`− Regalía (${cfg.regalia}%)`, "−" + fmt(e.regaliaMonto), true),
-      row("− Gasoil + reserva pala", "−" + fmt(e.gasoil + e.reserva), true),
+      p.palaCliente ? row("Pala", "la pone el cliente") : row("− Gasoil + reserva pala", "−" + fmt(e.gasoil + e.reserva), true),
       row("− Mano de obra", "−" + fmt(e.manoObra), true),
       row("− Varios", "−" + fmt(e.varios), true),
       p.modo === "grillada" ? row("− Amortización grilla", "−" + fmt(e.amortGrilla), true) : "",
@@ -781,17 +790,17 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
     setProgramadas((ps) => [
       ...ps,
       { id: newId(), fecha: pFecha, clienteId: pClienteId, cliente: cl ? cl.nombre : "—",
-        canal: cl ? cl.canal : "Socios", bateas: b, modo: pModo, nota: pNota.trim() },
+        canal: cl ? cl.canal : "Socios", bateas: b, modo: pModo, nota: pNota.trim(), palaCliente: pPalaCliente },
     ]);
-    setPBateas(1); setPNota(""); setPClienteId("");
+    setPBateas(1); setPNota(""); setPClienteId(""); setPPalaCliente(false);
   }
   function descartarProgramada(id) { setProgramadas((ps) => ps.filter((p) => p.id !== id)); }
   function registrarProgramada(p) {
     const b = parseFloat(p.bateas) || 0;
     setRegistros((rs) => [
       { id: newId(), fecha: p.fecha, modo: p.modo, bateas: b,
-        clienteId: p.clienteId, cliente: p.cliente, canal: p.canal,
-        econ: calcDia(cfg, p.modo, b) },
+        clienteId: p.clienteId, cliente: p.cliente, canal: p.canal, palaCliente: !!p.palaCliente,
+        econ: calcDia(cfg, p.modo, b, p.palaCliente) },
       ...rs,
     ]);
     setProgramadas((ps) => ps.filter((x) => x.id !== p.id));
@@ -817,9 +826,9 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
     if (!cNombre.trim()) return;
     setClientes((cs) => [
       ...cs,
-      { id: newId(), nombre: cNombre.trim(), localidad: cLocalidad.trim(), tel: cTel.trim(), canal: cCanal },
+      { id: newId(), nombre: cNombre.trim(), localidad: cLocalidad.trim(), tel: cTel.trim(), canal: cCanal, palaCliente: cPalaCliente },
     ]);
-    setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios");
+    setCNombre(""); setCLocalidad(""); setCTel(""); setCCanal("Socios"); setCPalaCliente(false);
   }
   function borrarCliente(id) {
     const idx = clientes.findIndex((c) => c.id === id);
@@ -832,7 +841,7 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
   function elegirCliente(id) {
     setFClienteId(id);
     const cl = clientes.find((c) => String(c.id) === String(id));
-    if (cl) setFCanal(cl.canal);
+    if (cl) { setFCanal(cl.canal); setFPalaCliente(!!cl.palaCliente); }
   }
 
   function exportar() {
@@ -951,6 +960,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           clienteId: r.clienteId != null ? r.clienteId : "",
           cliente: typeof r.cliente === "string" && r.cliente ? r.cliente : "—",
           canal: r.canal === "Directo" ? "Directo" : "Socios",
+          palaCliente: !!r.palaCliente,
           ...(r.econ && typeof r.econ === "object" ? { econ: r.econ } : {}),
         });
       } else descartados++;
@@ -967,6 +977,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           localidad: typeof c.localidad === "string" ? c.localidad : "",
           tel: typeof c.tel === "string" ? c.tel : "",
           canal: c.canal === "Directo" ? "Directo" : "Socios",
+          palaCliente: !!c.palaCliente,
         });
       } else descartados++;
     }
@@ -986,6 +997,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           cliente: typeof p.cliente === "string" && p.cliente ? p.cliente : "—",
           canal: p.canal === "Directo" ? "Directo" : "Socios",
           nota: typeof p.nota === "string" ? p.nota : "",
+          palaCliente: !!p.palaCliente,
         });
       }
     }
@@ -1177,6 +1189,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <Field label="Horas pala/jornada (bruta)" value={cfgDraft.horasPalaBruta} onChange={setD("horasPalaBruta")} suffix="h" step={0.5} />
               <Field label="Horas pala/jornada (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
               <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" step={50000} />
+              <Field label="Costos fijos / mes" value={cfgDraft.costosFijosMes} onChange={setD("costosFijosMes")} suffix="$" step={10000} />
             </div>
             <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 14, background: `${C.accent}0a`, borderRadius: 10, padding: "10px 14px", lineHeight: 1.5 }}>
               Costo de la persona por jornada: <b className="num" style={{ color: C.ink }}>{$(personaDia(normCfg(cfgDraft)))}</b> (jornal + cargas). Ese costo, más la pala y los varios del día, se reparten entre las <b>{normCfg(cfgDraft).bateasPorDia || 0}</b> bateas de la jornada — así una carga chica no se come el día entero.
@@ -1325,6 +1338,10 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Canal</span>
               <div className="inputWrap selectWrap"><select className="input" value={prCanal} onChange={(e) => setPrCanal(e.target.value)}><option>Directo</option><option>Socios</option></select></div>
             </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Pala</span>
+              <div className="inputWrap selectWrap"><select className="input" value={prPalaCliente ? "cliente" : "propia"} onChange={(e) => setPrPalaCliente(e.target.value === "cliente")}><option value="propia">La pongo yo</option><option value="cliente">La trae el cliente</option></select></div>
+            </label>
             <Field label="Bateas" value={prBateas} onChange={setBateasProp} suffix="bat" />
             <Field label="Toneladas" value={prTn} onChange={setTnProp} suffix="tn" />
           </div>
@@ -1457,6 +1474,14 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                 </select>
               </div>
             </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Pala</span>
+              <div className="inputWrap selectWrap">
+                <select className="input" value={cPalaCliente ? "cliente" : "propia"} onChange={(e) => setCPalaCliente(e.target.value === "cliente")}>
+                  <option value="propia">La pongo yo</option><option value="cliente">La trae el cliente</option>
+                </select>
+              </div>
+            </label>
             <button className="btn" onClick={agregarCliente}>+ Agregar</button>
           </div>
 
@@ -1511,6 +1536,14 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <div className="inputWrap selectWrap">
                 <select className="input" value={pModo} onChange={(e) => setPModo(e.target.value)}>
                   <option value="bruta">Bruta</option><option value="grillada">Grillada</option>
+                </select>
+              </div>
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Pala</span>
+              <div className="inputWrap selectWrap">
+                <select className="input" value={pPalaCliente ? "cliente" : "propia"} onChange={(e) => setPPalaCliente(e.target.value === "cliente")}>
+                  <option value="propia">La pongo yo</option><option value="cliente">La trae el cliente</option>
                 </select>
               </div>
             </label>
@@ -1587,6 +1620,14 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <div className="inputWrap selectWrap">
                 <select className="input" value={fCanal} onChange={(e) => setFCanal(e.target.value)}>
                   <option>Socios</option><option>Directo</option>
+                </select>
+              </div>
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Pala</span>
+              <div className="inputWrap selectWrap">
+                <select className="input" value={fPalaCliente ? "cliente" : "propia"} onChange={(e) => setFPalaCliente(e.target.value === "cliente")}>
+                  <option value="propia">La pongo yo</option><option value="cliente">La trae el cliente</option>
                 </select>
               </div>
             </label>
@@ -1718,9 +1759,18 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
         <Section tag="Proyección" title={`Si cargás ${qBruta} bruta + ${qGrillada} grillada por mes`}>
           <div className="grid-3">
             <Kpi label="Por semana" value={$(proySem)} sub="≈ mes ÷ 4,33" color={C.accent} />
-            <Kpi label="Por mes" value={$(proyMes)} sub="≈ 4,33 semanas" color={C.accent} />
-            <Kpi label="Por año" value={$(proyAnio)} sub="52 semanas" color={C.accent} />
+            <Kpi label="Por mes" value={$(proyMes)} sub="margen de contribución" color={C.accent} />
+            <Kpi label="Por año" value={$(proyAnio)} sub="12 meses" color={C.accent} />
           </div>
+          {cfg.costosFijosMes > 0 && (
+            <table style={{ width: "100%", marginTop: 16 }} className="brk">
+              <tbody>
+                <tr><td>Margen de contribución del mes</td><td className="num">{$(proyMes)}</td></tr>
+                <tr><td>− Costos fijos del mes (los pagás cargues o no)</td><td className="num" style={{ color: C.rojo }}>−{N(cfg.costosFijosMes)}</td></tr>
+                <tr><td style={{ fontWeight: 700 }}>Resultado del mes</td><td className="num" style={{ fontWeight: 700, color: (proyMes - cfg.costosFijosMes) >= 0 ? C.verde : C.rojo }}>{$(proyMes - cfg.costosFijosMes)}</td></tr>
+              </tbody>
+            </table>
+          )}
         </Section>
 
         {/* RESPALDO */}
