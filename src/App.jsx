@@ -893,6 +893,40 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
       )
     );
   }
+  // Resumen mensual/semanal a PDF (vía impresión → Guardar como PDF). Sin librerías.
+  function exportarResumenPDF(tipo) {
+    if (!registros.length) { setImportErr("Todavía no hay cargas para exportar."); return; }
+    setImportErr("");
+    const filas = tipo === "semanal"
+      ? filasResumen((f) => localISO(startOfWeek(new Date(f + "T00:00:00"))), (k) => "Semana " + k.split("-").reverse().join("/"))
+      : filasResumen((f) => f.slice(0, 7), (k) => mesLabel(k));
+    const fmt = (n) => (isFinite(n) ? "$" + Math.round(n).toLocaleString("es-AR") : "—");
+    const nf = (n) => Math.round(n).toLocaleString("es-AR");
+    const tot = { bat: 0, tn: 0, ing: 0, com: 0, margen: 0 };
+    const trs = filas.map((f) => {
+      const tnTot = f.tnB + f.tnG, bat = f.batB + f.batG;
+      tot.bat += bat; tot.tn += tnTot; tot.ing += f.ing; tot.com += f.com; tot.margen += f.margen;
+      return `<tr><td>${f.label}</td><td class="r">${nf(bat)}</td><td class="r">${nf(tnTot)}</td><td class="r">${fmt(f.ing)}</td><td class="r" style="color:#a82c20">−${nf(f.com)}</td><td class="r" style="color:${f.margen >= 0 ? "#1c6b3e" : "#a82c20"}">${fmt(f.margen)}</td></tr>`;
+    }).join("");
+    const totRow = `<tr class="tot"><td>TOTAL</td><td class="r">${nf(tot.bat)}</td><td class="r">${nf(tot.tn)}</td><td class="r">${fmt(tot.ing)}</td><td class="r" style="color:#a82c20">−${nf(tot.com)}</td><td class="r" style="color:${tot.margen >= 0 ? "#1c6b3e" : "#a82c20"}">${fmt(tot.margen)}</td></tr>`;
+    const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Resumen ${tipo} El Retiro</title>
+<style>body{font-family:Arial,Helvetica,sans-serif;color:#211b17;max-width:760px;margin:24px auto;padding:0 16px}
+h1{color:#5a0f1c;margin:0 0 2px;font-size:24px;letter-spacing:-.02em}
+.sub{color:#857a6e;font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:18px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px}
+th{text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#857a6e;border-bottom:2px solid #211b17;padding:8px 6px}
+th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td.r{font-family:monospace}
+.tot td{border-top:2px solid #211b17;border-bottom:0;font-weight:bold}
+.ft{color:#857a6e;font-size:11px;margin-top:20px}</style></head><body>
+<h1>EL RETIRO</h1><div class="sub">Resumen ${tipo} · Arenera · Sol de Julio</div>
+<table><thead><tr><th>Período</th><th class="r">Bateas</th><th class="r">Tn</th><th class="r">Ingreso</th><th class="r">Socios</th><th class="r">Margen</th></tr></thead>
+<tbody>${trs}${totRow}</tbody></table>
+<div class="ft">Generado con El Retiro · ${new Date().toLocaleDateString("es-AR")}</div>
+<script>window.onload=function(){window.print()}<\/script></body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { setImportErr("El navegador bloqueó la ventana. Permití las ventanas emergentes para exportar el PDF."); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+  }
 
   // Saneo del respaldo: descarta lo que esté roto en vez de meter NaN a los totales.
   function sanitizarRegistros(arr) {
@@ -1560,8 +1594,8 @@ table{width:100%;border-collapse:collapse;margin:12px 0}td{padding:7px 0;border-
         <Section tag="Resumen" title="Mes por mes"
           right={
             <div className="row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-              <button className="tog" onClick={exportarResumenMensual}>↓ CSV mensual</button>
-              <button className="tog" onClick={exportarResumenSemanal}>↓ CSV semanal</button>
+              <button className="tog" onClick={() => exportarResumenPDF("mensual")}>↧ PDF mensual</button>
+              <button className="tog" onClick={() => exportarResumenPDF("semanal")}>↧ PDF semanal</button>
             </div>
           }>
           {resumenMeses.length === 0 ? (
