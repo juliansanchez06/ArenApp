@@ -341,7 +341,7 @@ function Login() {
     <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "Archivo, sans-serif" }}>
       <form onSubmit={entrar} style={{ width: "100%", maxWidth: 380, background: C.bg, borderRadius: 22, padding: "32px 28px", boxShadow: `9px 9px 20px ${C.dark}, -9px -9px 20px ${C.light}` }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <img src="/logo.png" alt="El Retiro" style={{ width: 170, height: "auto", display: "inline-block", mixBlendMode: "multiply" }} />
+          <img src="/logo.png" alt="El Retiro" style={{ width: 190, height: "auto", display: "inline-block" }} />
           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: C.accent, fontWeight: 600, marginTop: 8 }}>Panel de control</div>
         </div>
         <label style={{ display: "block", marginBottom: 16 }}>
@@ -1150,7 +1150,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
             <div>
               {logoOk ? (
                 <img src="/logo.png" alt="El Retiro" onError={() => setLogoOk(false)}
-                  style={{ width: "min(230px, 62vw)", height: "auto", display: "block", mixBlendMode: "multiply" }} />
+                  style={{ width: "min(240px, 64vw)", height: "auto", display: "block" }} />
               ) : (
                 <h1 style={{ margin: 0, fontFamily: "Archivo, sans-serif", fontWeight: 800, fontSize: 38, letterSpacing: "-0.03em", color: C.accent }}>EL RETIRO</h1>
               )}
