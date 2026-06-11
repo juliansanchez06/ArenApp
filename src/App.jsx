@@ -479,6 +479,13 @@ function AppInner({ user }) {
     }, 600);
   }, [cfg, registros, clientes, programadas, propuestas, qBruta, qGrillada, user.uid]);
 
+  // El objetivo del mes ES el plan de la calculadora: mantenemos cfg (y el borrador) en sync (KPI, amortización, persistencia).
+  useEffect(() => {
+    const b = parseFloat(qBruta) || 0, g = parseFloat(qGrillada) || 0;
+    setCfg((c) => (c.objetivoBrutaMes === b && c.objetivoGrilladaMes === g ? c : { ...c, objetivoBrutaMes: b, objetivoGrilladaMes: g }));
+    setCfgDraft((d) => (d.objetivoBrutaMes === b && d.objetivoGrilladaMes === g ? d : { ...d, objetivoBrutaMes: b, objetivoGrilladaMes: g }));
+  }, [qBruta, qGrillada]);
+
   const setD = (k) => (v) => { setCfgDraft((d) => ({ ...d, [k]: v })); setCfgSaved(false); };
   const normCfg = (obj) => { const o = {}; for (const k in obj) { const v = obj[k]; o[k] = typeof v === "number" ? v : (parseFloat(v) || 0); } return o; };
   const cfgDirty = useMemo(() => JSON.stringify(normCfg(cfgDraft)) !== JSON.stringify(cfg), [cfgDraft, cfg]);
@@ -569,7 +576,7 @@ function AppInner({ user }) {
   }, [registros, cfg]);
 
   // objetivo mensual total de bateas (bruta + grillada)
-  const objMes = (cfg.objetivoBrutaMes || 0) + (cfg.objetivoGrilladaMes || 0);
+  const objMes = (parseFloat(qBruta) || 0) + (parseFloat(qGrillada) || 0); // el objetivo del mes = el plan de la calculadora
 
   // alertas
   const programadasSort = useMemo(
@@ -1176,8 +1183,6 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" step={100} />
               <Field label="Comisión socios" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
               <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
-              <Field label="Objetivo bruta / mes" value={cfgDraft.objetivoBrutaMes} onChange={setD("objetivoBrutaMes")} suffix="bateas" />
-              <Field label="Objetivo grillada / mes" value={cfgDraft.objetivoGrilladaMes} onChange={setD("objetivoGrilladaMes")} suffix="bateas" />
               <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
               <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
               <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" step={0.5} />
