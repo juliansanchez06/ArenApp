@@ -16,6 +16,7 @@ const DEFAULTS = {
   comisionSocios: 30,       // %
   regalia: 3,               // % de boca de mina
   tnPorBatea: 30,           // tn
+  pesoM3: 1.5,              // tn por m³ (peso específico de la arena) — para convertir tn ↔ m³
   objetivoBrutaMes: 8,      // bateas/mes de bruta (objetivo)
   objetivoGrilladaMes: 4,   // bateas/mes de grillada (objetivo)
   gasoilPrecio: 1800,       // $/L
@@ -529,6 +530,11 @@ function AppInner({ user }) {
   // Economía de un registro: usa el snapshot inmutable guardado al cargar (r.econ).
   // Para registros viejos sin snapshot, cae a recalcular con cfg actual (compatibilidad).
   const econDe = (r) => (r && r.econ ? r.econ : calcDia(cfg, r.modo, r.bateas, r.palaCliente));
+
+  // Conversión tn ↔ m³ según el peso específico de la arena (tn/m³).
+  const pesoM3 = parseFloat(cfg.pesoM3) || 0;
+  const aM3 = (tn) => (pesoM3 > 0 ? tn / pesoM3 : 0);          // toneladas → metros cúbicos
+  const precioM3 = (precioTn) => precioTn * pesoM3;            // $/tn → $/m³
 
   // Planificador del mes: cálculo por modo a las cantidades elegidas
   const diaB = useMemo(() => calcDia(cfg, "bruta", qBruta), [cfg, qBruta]);
@@ -1286,6 +1292,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <Field label="Precio grillada" value={cfgDraft.precioGrillada} onChange={setD("precioGrillada")} suffix="$/tn" step={100} />
               <Field label="Comisión intermediario" value={cfgDraft.comisionSocios} onChange={setD("comisionSocios")} suffix="%" />
               <Field label="Tn por batea" value={cfgDraft.tnPorBatea} onChange={setD("tnPorBatea")} suffix="tn" />
+              <Field label="Peso específico" value={cfgDraft.pesoM3} onChange={setD("pesoM3")} suffix="tn/m³" step={0.1} />
               <Field label="Regalía" value={cfgDraft.regalia} onChange={setD("regalia")} suffix="%" />
               <Field label="Gasoil" value={cfgDraft.gasoilPrecio} onChange={setD("gasoilPrecio")} suffix="$/L" step={50} />
               <Field label="Consumo pala" value={cfgDraft.palaConsumo} onChange={setD("palaConsumo")} suffix="L/h" step={0.5} />
@@ -1314,7 +1321,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
 
         {/* KPIs */}
         <div className="grid-kpi" style={{ marginBottom: 22 }}>
-          <Kpi label="Margen del mes" value={$(stats.margenMes)} sub={`${N(stats.tnMes)} tn cargadas`} color={semMar} />
+          <Kpi label="Margen del mes" value={$(stats.margenMes)} sub={`${N(stats.tnMes)} tn${pesoM3 > 0 ? ` · ${N(aM3(stats.tnMes))} m³` : ""}`} color={semMar} />
           <Kpi label="Ventas directas" value={`${N(stats.pctDir)}%`} sub="cuanto más alto, más recuperás del 30%" color={semDir} />
           <Kpi label="Bateas este mes" value={`${stats.batMes} / ${objMes}`} sub="objetivo mensual" color={semBat} />
           <Kpi label="Comisión intermediario (mes)" value={$(stats.comMes)} sub="tu mayor costo" color={C.accent} />
@@ -1337,6 +1344,8 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                 <tr><td>Neto grillada</td><td className="num">{$(netoG)}/tn</td></tr>
                 <tr><td>Precio grillada para empatar</td><td className="num" style={{ color: C.accent }}>{$(beG)}/tn</td></tr>
                 <tr><td>Piso de la bruta (pérdida)</td><td className="num">{$(beB)}/tn</td></tr>
+                {pesoM3 > 0 && <tr><td>Precio bruta por m³</td><td className="num">{$(precioM3(cfg.precioBruta))}/m³</td></tr>}
+                {pesoM3 > 0 && <tr><td>Precio grillada por m³</td><td className="num">{$(precioM3(cfg.precioGrillada))}/m³</td></tr>}
               </tbody>
             </table>
             <div style={{ fontSize: 12, color: C.ink2, marginTop: 12, lineHeight: 1.5 }}>
@@ -1397,7 +1406,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <span className="num" style={{ fontSize: 22, color: totalMargenMes >= 0 ? C.verde : C.rojo }}>{$(totalMargenMes)}</span>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", color: C.ink2, fontSize: 12.5, marginTop: 6 }}>
-              <span>{N(totalTnMes)} tn en total</span><span>{qBruta + qGrillada} bateas</span>
+              <span>{N(totalTnMes)} tn{pesoM3 > 0 ? ` · ${N(aM3(totalTnMes))} m³` : ""}</span><span>{qBruta + qGrillada} bateas</span>
             </div>
             {/* Resultado del mes: la contribución MENOS los fijos (se pagan cargues o no) */}
             <table style={{ width: "100%", marginTop: 12 }} className="brk">
@@ -1476,6 +1485,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <table style={{ width: "100%" }} className="brk">
                 <tbody>
                   <tr><td>Ingreso bruto ({N(prEcon.tn)} tn × {$(prPrecioNum)})</td><td className="num">{$(prEcon.ingresoBruto)}</td></tr>
+                  {pesoM3 > 0 && <tr><td>Equivale a</td><td className="num">{N(aM3(prEcon.tn))} m³ · {$(precioM3(prPrecioNum))}/m³</td></tr>}
                   {prCanal !== "Directo"
                     ? <tr><td>− Comisión intermediario ({cfg.comisionSocios}%)</td><td className="num" style={{ color: C.rojo }}>−{N(prEcon.comision)}</td></tr>
                     : <tr><td>Comisión intermediario</td><td className="num" style={{ color: C.ink2 }}>venta directa</td></tr>}
