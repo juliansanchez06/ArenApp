@@ -32,7 +32,9 @@ const DEFAULTS = {
   variosGrillada: 15000,
   costoGrilla: 1500000,     // $ inversión grilla
   vidaGrillaAnios: 4,
-  empleadoMes: 0,           // $ sueldo del empleado por mes (con cargas) — costo fijo
+  empleadoMes: 0,           // $ sueldo del empleado por mes (con cargas)
+  empleadoDiasMes: 22,      // días totales que trabaja el empleado al mes
+  empleadoDiasArena: 5,     // de esos, cuántos los usás en la arenera (solo esos se cargan a la arena)
   costosFijosMes: 0,        // $ otros costos fijos del mes (alquiler, seguros, etc.)
 };
 
@@ -48,9 +50,17 @@ function costoFijoDia(cfg, modo) {
   const reserva = horas * cfg.palaReserva;
   return { gasoil, reserva, varios, total: gasoil + reserva + varios };
 }
-// Total de costos fijos del mes (empleado con cargas + otros fijos): se pagan cargues o no.
+// Parte del sueldo del empleado que le toca a la arenera: prorrateado por los días que lo usás acá.
+// (Los otros días los paga el otro trabajo.)
+function empleadoArena(cfg) {
+  const dm = cfg.empleadoDiasMes || 0;
+  const da = cfg.empleadoDiasArena || 0;
+  const ratio = dm > 0 ? Math.min(da / dm, 1) : 1;
+  return (cfg.empleadoMes || 0) * ratio;
+}
+// Total de costos fijos del mes que carga la arenera (empleado prorrateado + otros fijos).
 function fijosMes(cfg) {
-  return (cfg.empleadoMes || 0) + (cfg.costosFijosMes || 0);
+  return empleadoArena(cfg) + (cfg.costosFijosMes || 0);
 }
 
 function calcDia(cfg, modo, bateas, palaCliente) {
@@ -1202,10 +1212,12 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               <Field label="Horas pala/jornada (grillada)" value={cfgDraft.horasPalaGrillada} onChange={setD("horasPalaGrillada")} suffix="h" step={0.5} />
               <Field label="Costo grilla" value={cfgDraft.costoGrilla} onChange={setD("costoGrilla")} suffix="$" step={50000} />
               <Field label="Empleado / mes (con cargas)" value={cfgDraft.empleadoMes} onChange={setD("empleadoMes")} suffix="$" step={10000} />
+              <Field label="Días empleado / mes" value={cfgDraft.empleadoDiasMes} onChange={setD("empleadoDiasMes")} suffix="días" step={1} />
+              <Field label="Días en la arenera" value={cfgDraft.empleadoDiasArena} onChange={setD("empleadoDiasArena")} suffix="días" step={1} />
               <Field label="Otros fijos / mes" value={cfgDraft.costosFijosMes} onChange={setD("costosFijosMes")} suffix="$" step={10000} />
             </div>
             <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 14, background: `${C.accent}0a`, borderRadius: 10, padding: "10px 14px", lineHeight: 1.5 }}>
-              El empleado y los otros fijos (<b className="num" style={{ color: C.ink }}>{$(fijosMes(normCfg(cfgDraft)))}/mes</b>) se pagan cargues o no, y se restan una vez al mes en la Proyección. La pala y los varios del día se reparten entre las <b>{normCfg(cfgDraft).bateasPorDia || 0}</b> bateas de la jornada (si el cliente trae la pala, esa carga no paga ni pala ni empleado).
+              Del empleado, la arenera paga solo <b className="num" style={{ color: C.ink }}>{normCfg(cfgDraft).empleadoDiasArena || 0}</b> de <b>{normCfg(cfgDraft).empleadoDiasMes || 0}</b> días = <b className="num" style={{ color: C.ink }}>{$(empleadoArena(normCfg(cfgDraft)))}/mes</b> (el resto lo paga el otro trabajo). Con los otros fijos, son <b className="num" style={{ color: C.ink }}>{$(fijosMes(normCfg(cfgDraft)))}/mes</b> que se restan una vez al mes. La pala y los varios del día se reparten entre las <b>{normCfg(cfgDraft).bateasPorDia || 0}</b> bateas de la jornada.
             </div>
             <div className="row" style={{ marginTop: 20, paddingTop: 18, borderTop: `1px solid ${C.line}`, alignItems: "center", gap: 16, flexWrap: "wrap" }}>
               <button className="btn" style={{ background: cfgDirty ? C.accent : C.ink2, cursor: cfgDirty ? "pointer" : "default" }} disabled={!cfgDirty} onClick={guardarCfg}>Guardar supuestos</button>
