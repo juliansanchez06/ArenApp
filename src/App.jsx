@@ -233,6 +233,7 @@ const SECTION_COLORS = {
   "Proyección": "#356b41",   // verde
   "Parámetros": "#4a4540",   // carbón cálido
   "Datos": "#3f5560",        // pizarra
+  "Inflación": "#8a3a2a",    // ladrillo
 };
 
 // Tono del fondo de cada sección, intercalado claro/oscuro (misma paleta arena).
@@ -241,7 +242,7 @@ const TONO_OSCURO = "#d9ccac";
 const SECTION_TONE = {
   "Decisión": TONO_CLARO, "Calculadora": TONO_OSCURO, "Propuesta": TONO_CLARO, "Cartera": TONO_OSCURO,
   "Agenda": TONO_CLARO, "Operación": TONO_OSCURO, "Resumen": TONO_CLARO, "Calendario": TONO_OSCURO,
-  "Tablero": TONO_CLARO, "Proyección": TONO_OSCURO, "Parámetros": TONO_CLARO, "Datos": TONO_CLARO,
+  "Tablero": TONO_CLARO, "Proyección": TONO_OSCURO, "Inflación": TONO_CLARO, "Parámetros": TONO_CLARO, "Datos": TONO_CLARO,
 };
 
 function Section({ tag, title, right, children, id }) {
@@ -395,6 +396,7 @@ function AppInner({ user }) {
   const [registros, setRegistros] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [programadas, setProgramadas] = useState([]);
+  const [indices, setIndices] = useState([]);   // historial de índices FACPCE cargados
   const [propuestas, setPropuestas] = useState([]);
   const [qBruta, setQBruta] = useState(DEFAULTS.objetivoBrutaMes);
   const [qGrillada, setQGrillada] = useState(DEFAULTS.objetivoGrilladaMes);
@@ -444,6 +446,11 @@ function AppInner({ user }) {
   const [propExp, setPropExp] = useState({});       // {id: true} propuestas desplegadas
   const [verDesgloseCalc, setVerDesgloseCalc] = useState(false); // desglose de costos en la calculadora
 
+  // form de índice de inflación (FACPCE)
+  const [iMes, setIMes] = useState(() => todayISO().slice(0, 7));
+  const [iValor, setIValor] = useState("");
+  const [iAjustarCostos, setIAjustarCostos] = useState(true);
+
   // ── Sincronización con Firestore (un documento por usuario) ──
   const hydrated = useRef(false);   // true cuando ya recibimos los datos del servidor (evita pisar con vacío)
   const lastSync = useRef("");      // último estado conocido del server (evita bucle de escrituras)
@@ -462,6 +469,7 @@ function AppInner({ user }) {
         const cliL = Array.isArray(d.clientes) ? d.clientes : [];
         const progL = Array.isArray(d.programadas) ? d.programadas : [];
         const propL = Array.isArray(d.propuestas) ? d.propuestas : [];
+        const indL = Array.isArray(d.indices) ? d.indices : [];
         // Plan de la calculadora: si está guardado lo usamos; si no, arranca en el objetivo mensual.
         const planB = d.plan && typeof d.plan.bruta === "number" ? d.plan.bruta : cfgL.objetivoBrutaMes;
         const planG = d.plan && typeof d.plan.grillada === "number" ? d.plan.grillada : cfgL.objetivoGrilladaMes;
@@ -475,7 +483,8 @@ function AppInner({ user }) {
         setClientes(cliL);
         setProgramadas(progL);
         setPropuestas(propL);
-        lastSync.current = JSON.stringify({ cfg: cfgL, registros: regL, clientes: cliL, programadas: progL, propuestas: propL, plan: { bruta: planB, grillada: planG } });
+        setIndices(indL);
+        lastSync.current = JSON.stringify({ cfg: cfgL, registros: regL, clientes: cliL, programadas: progL, propuestas: propL, indices: indL, plan: { bruta: planB, grillada: planG } });
         hydrated.current = true;
       },
       (e) => { try { console.error("Firestore:", e); } catch {} hydrated.current = true; }
@@ -486,7 +495,7 @@ function AppInner({ user }) {
   // 2) Guardar cambios locales (con rebote), solo después de hidratar y solo si cambió algo
   useEffect(() => {
     if (!hydrated.current) return;
-    const estado = { cfg, registros, clientes, programadas, propuestas, plan: { bruta: qBruta, grillada: qGrillada } };
+    const estado = { cfg, registros, clientes, programadas, propuestas, indices, plan: { bruta: qBruta, grillada: qGrillada } };
     const json = JSON.stringify(estado);
     if (json === lastSync.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -497,7 +506,7 @@ function AppInner({ user }) {
         .then(() => { lastSync.current = json; })
         .catch((e) => { try { console.error("No se pudo guardar:", e); } catch {} });
     }, 600);
-  }, [cfg, registros, clientes, programadas, propuestas, qBruta, qGrillada, user.uid]);
+  }, [cfg, registros, clientes, programadas, propuestas, indices, qBruta, qGrillada, user.uid]);
 
   // El objetivo del mes ES el plan de la calculadora: mantenemos cfg (y el borrador) en sync (KPI, amortización, persistencia).
   useEffect(() => {
@@ -774,6 +783,61 @@ function AppInner({ user }) {
     setPropuestas((ps) => ps.filter((p) => p.id !== id));
     armarUndo("propuesta", item, idx, "Propuesta eliminada");
   }
+
+  // ── Inflación FACPCE: parsea valores con coma/punto a la argentina ──
+  function parseIndice(s) {
+    let t = String(s == null ? "" : s).trim();
+    if (t.includes(",")) t = t.replace(/\./g, "").replace(",", "."); // 11.607,3937 → 11607.3937
+    return parseFloat(t);
+  }
+  // Carga el índice del mes y, si hay un mes anterior, ajusta precios (y costos) por la inflación.
+  function cargarIndice() {
+    const valor = parseIndice(iValor);
+    if (!isFinite(valor) || valor <= 0 || !iMes) return;
+    const previos = indices.filter((x) => x.mes < iMes).sort((a, b) => (a.mes < b.mes ? 1 : -1));
+    const prev = previos[0];
+    const factor = prev && prev.valor > 0 ? valor / prev.valor : 1;
+    if (factor !== 1 && isFinite(factor)) {
+      setCfg((c) => {
+        const n = { ...c, precioBruta: Math.round(c.precioBruta * factor), precioGrillada: Math.round(c.precioGrillada * factor) };
+        if (iAjustarCostos) {
+          n.gasoilPrecio = Math.round(c.gasoilPrecio * factor);
+          n.palaReserva = Math.round(c.palaReserva * factor);
+          n.variosBruta = Math.round(c.variosBruta * factor);
+          n.variosGrillada = Math.round(c.variosGrillada * factor);
+          n.empleadoMes = Math.round(c.empleadoMes * factor);
+          n.costosFijosMes = Math.round(c.costosFijosMes * factor);
+          n.costoGrilla = Math.round(c.costoGrilla * factor);
+        }
+        return n;
+      });
+      setCfgDraft((d) => {
+        const n = { ...d, precioBruta: Math.round((parseFloat(d.precioBruta) || 0) * factor), precioGrillada: Math.round((parseFloat(d.precioGrillada) || 0) * factor) };
+        if (iAjustarCostos) {
+          n.gasoilPrecio = Math.round((parseFloat(d.gasoilPrecio) || 0) * factor);
+          n.palaReserva = Math.round((parseFloat(d.palaReserva) || 0) * factor);
+          n.variosBruta = Math.round((parseFloat(d.variosBruta) || 0) * factor);
+          n.variosGrillada = Math.round((parseFloat(d.variosGrillada) || 0) * factor);
+          n.empleadoMes = Math.round((parseFloat(d.empleadoMes) || 0) * factor);
+          n.costosFijosMes = Math.round((parseFloat(d.costosFijosMes) || 0) * factor);
+          n.costoGrilla = Math.round((parseFloat(d.costoGrilla) || 0) * factor);
+        }
+        return n;
+      });
+    }
+    setIndices((xs) => {
+      const sin = xs.filter((x) => x.mes !== iMes); // si recargás el mismo mes, lo reemplaza
+      return [...sin, { id: newId(), mes: iMes, valor, inflacion: (factor - 1) * 100, ajustoCostos: !!iAjustarCostos, fecha: todayISO() }]
+        .sort((a, b) => (a.mes < b.mes ? 1 : -1));
+    });
+    // dejar listo el mes siguiente
+    setIValor("");
+    const [y, m] = iMes.split("-").map(Number);
+    const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+    setIMes(next);
+  }
+  function borrarIndice(id) { setIndices((xs) => xs.filter((x) => x.id !== id)); }
+
   // Exporta una propuesta a PDF abriendo el diálogo de impresión (Guardar como PDF). Sin librerías.
   function exportarPropuestaPDF(p) {
     const e = p.econ || analizarPropuesta(cfg, p.modo, p.canal, p.precio, p.bateas, p.palaCliente);
@@ -1029,6 +1093,23 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
     }
     return { ok };
   }
+  function sanitizarIndices(arr) {
+    const ok = [];
+    for (const x of Array.isArray(arr) ? arr : []) {
+      const v = parseFloat(x && x.valor);
+      const mesOk = x && typeof x.mes === "string" && /^\d{4}-\d{2}$/.test(x.mes);
+      if (mesOk && v > 0) {
+        ok.push({
+          id: (x.id !== undefined && x.id !== null) ? x.id : newId(),
+          mes: x.mes, valor: v,
+          inflacion: typeof x.inflacion === "number" ? x.inflacion : 0,
+          ajustoCostos: !!x.ajustoCostos,
+          fecha: typeof x.fecha === "string" ? x.fecha : "",
+        });
+      }
+    }
+    return { ok: ok.sort((a, b) => (a.mes < b.mes ? 1 : -1)) };
+  }
 
   function archivoElegido(e) {
     setImportErr("");
@@ -1042,9 +1123,10 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
         const reg = sanitizarRegistros(data.registros);
         const cli = sanitizarClientes(data.clientes);
         const prog = sanitizarProgramadas(data.programadas);
+        const ind = sanitizarIndices(data.indices);
         setPendingImport({
           cfg: data.cfg && typeof data.cfg === "object" ? data.cfg : null,
-          registros: reg.ok, clientes: cli.ok, programadas: prog.ok,
+          registros: reg.ok, clientes: cli.ok, programadas: prog.ok, indices: ind.ok,
           descartados: reg.descartados + cli.descartados,
         });
       } catch { setImportErr("El archivo no es un respaldo válido de El Retiro."); }
@@ -1060,6 +1142,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
     setRegistros(pendingImport.registros);
     setClientes(pendingImport.clientes);
     setProgramadas(pendingImport.programadas);
+    if (Array.isArray(pendingImport.indices)) setIndices(pendingImport.indices);
     setPendingImport(null);
   }
 
@@ -1806,6 +1889,61 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               </>
             );
           })()}
+        </Section>
+
+        {/* INFLACIÓN FACPCE */}
+        <Section tag="Inflación" title="Ajuste por inflación (FACPCE)"
+          right={<span className="label">{indices.length} cargados</span>}>
+          {(() => {
+            const prev = indices.filter((x) => x.mes < iMes).sort((a, b) => (a.mes < b.mes ? 1 : -1))[0];
+            const v = parseIndice(iValor);
+            const factor = prev && prev.valor > 0 && isFinite(v) && v > 0 ? v / prev.valor : null;
+            return (
+              <>
+                <div className="grid-form" style={{ marginBottom: 14 }}>
+                  <label style={{ display: "block" }}>
+                    <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Mes</span>
+                    <div className="inputWrap"><input className="input" type="month" value={iMes} onChange={(e) => setIMes(e.target.value)} /></div>
+                  </label>
+                  <label style={{ display: "block" }}>
+                    <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Índice FACPCE</span>
+                    <div className="inputWrap"><input className="input" inputMode="decimal" placeholder="11.607,3937" value={iValor} onChange={(e) => setIValor(e.target.value.replace(/[^0-9.,]/g, ""))} /></div>
+                  </label>
+                  <label style={{ display: "block" }}>
+                    <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Ajustar</span>
+                    <div className="inputWrap selectWrap"><select className="input" value={iAjustarCostos ? "ambos" : "precios"} onChange={(e) => setIAjustarCostos(e.target.value === "ambos")}><option value="ambos">Precios y costos</option><option value="precios">Solo precios</option></select></div>
+                  </label>
+                </div>
+                <div style={{ fontSize: 13, color: C.ink2, marginBottom: 14, background: `${SECTION_COLORS["Inflación"]}10`, borderRadius: 10, padding: "12px 16px", lineHeight: 1.5 }}>
+                  {!prev
+                    ? "Primer índice cargado: queda como base, no ajusta precios. El mes que viene cargás el nuevo valor y la app calcula la inflación."
+                    : factor
+                      ? <>Inflación {iMes} vs {prev.mes}: <b className="num" style={{ color: SECTION_COLORS["Inflación"] }}>{N((factor - 1) * 100)}%</b>. Al cargar, {iAjustarCostos ? "precios y costos" : "los precios"} suben ese %.</>
+                      : `Cargá el índice del mes. El mes base es ${prev.mes} (${prev.valor.toLocaleString("es-AR")}).`}
+                </div>
+                <button className="btn" onClick={cargarIndice}>Cargar y actualizar precios</button>
+              </>
+            );
+          })()}
+
+          {indices.length > 0 && (
+            <div style={{ overflowX: "auto", marginTop: 20 }}>
+              <table className="reg">
+                <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Índice</th><th style={{ textAlign: "right" }}>Inflación</th><th>Ajustó</th><th></th></tr></thead>
+                <tbody>
+                  {[...indices].sort((a, b) => (a.mes < b.mes ? 1 : -1)).map((x) => (
+                    <tr key={x.id}>
+                      <td data-label="Mes" style={{ fontWeight: 600 }}>{mesLabel(x.mes)}</td>
+                      <td data-label="Índice" className="num" style={{ textAlign: "right" }}>{x.valor.toLocaleString("es-AR", { maximumFractionDigits: 4 })}</td>
+                      <td data-label="Inflación" className="num" style={{ textAlign: "right", color: x.inflacion > 0 ? C.rojo : C.ink2 }}>{x.inflacion ? `${N(x.inflacion)}%` : "base"}</td>
+                      <td data-label="Ajustó">{x.inflacion ? (x.ajustoCostos ? "Precios y costos" : "Solo precios") : "—"}</td>
+                      <td data-label="" style={{ textAlign: "right" }}><button className="del" title="Eliminar" aria-label="Eliminar índice" onClick={() => borrarIndice(x.id)}>×</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Section>
 
         {/* RESPALDO */}
