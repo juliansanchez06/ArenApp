@@ -894,7 +894,7 @@ td.r{text-align:right;font-family:monospace}
 tr.sub td{font-weight:bold;border-bottom:2px solid #211b17}
 tr.tot td{border-top:2px solid #211b17;border-bottom:0;font-weight:bold;font-size:17px;padding-top:12px}
 .ft{color:#857a6e;font-size:11px;margin-top:24px}</style></head><body>
-<h1>EL RETIRO</h1><div class="sub0">Calculadora · Plan del mes · Arenera Sol de Julio</div>
+<img src="${location.origin}/logo.png" alt="EL RETIRO" style="height:70px;display:block;margin:0 0 6px" /><div class="sub0">Calculadora · Plan del mes · Arenera Sol de Julio</div>
 <h2>BRUTA — ${qBruta} bateas · ${nf(diaB.tn)} tn${m3 ? ` · ${nf(aM3(diaB.tn))} m³` : ""} · ${fmt(cfg.precioBruta)}/tn${m3 ? ` (${fmt(precioM3(cfg.precioBruta))}/m³)` : ""}</h2>
 <table><tbody>${desglose(diaB, "bruta")}</tbody></table>
 <h2>GRILLADA — ${qGrillada} bateas · ${nf(diaG.tn)} tn${m3 ? ` · ${nf(aM3(diaG.tn))} m³` : ""} · ${fmt(cfg.precioGrillada)}/tn${m3 ? ` (${fmt(precioM3(cfg.precioGrillada))}/m³)` : ""}</h2>
