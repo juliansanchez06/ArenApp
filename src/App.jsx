@@ -895,9 +895,9 @@ tr.sub td{font-weight:bold;border-bottom:2px solid #211b17}
 tr.tot td{border-top:2px solid #211b17;border-bottom:0;font-weight:bold;font-size:17px;padding-top:12px}
 .ft{color:#857a6e;font-size:11px;margin-top:24px}</style></head><body>
 <h1>EL RETIRO</h1><div class="sub0">Calculadora · Plan del mes · Arenera Sol de Julio</div>
-<h2>BRUTA — ${qBruta} bateas · ${nf(diaB.tn)} tn${m3 ? ` · ${nf(aM3(diaB.tn))} m³` : ""}</h2>
+<h2>BRUTA — ${qBruta} bateas · ${nf(diaB.tn)} tn${m3 ? ` · ${nf(aM3(diaB.tn))} m³` : ""} · ${fmt(cfg.precioBruta)}/tn${m3 ? ` (${fmt(precioM3(cfg.precioBruta))}/m³)` : ""}</h2>
 <table><tbody>${desglose(diaB, "bruta")}</tbody></table>
-<h2>GRILLADA — ${qGrillada} bateas · ${nf(diaG.tn)} tn${m3 ? ` · ${nf(aM3(diaG.tn))} m³` : ""}</h2>
+<h2>GRILLADA — ${qGrillada} bateas · ${nf(diaG.tn)} tn${m3 ? ` · ${nf(aM3(diaG.tn))} m³` : ""} · ${fmt(cfg.precioGrillada)}/tn${m3 ? ` (${fmt(precioM3(cfg.precioGrillada))}/m³)` : ""}</h2>
 <table><tbody>${desglose(diaG, "grillada")}</tbody></table>
 <h2>RESULTADO DEL MES</h2>
 <table><tbody>
@@ -906,7 +906,7 @@ ${row(`− Empleado (${cfg.empleadoDiasArena || 0} de ${cfg.empleadoDiasMes || 0
 ${cfg.costosFijosMes > 0 ? row("− Otros fijos del mes", "−" + fmt(cfg.costosFijosMes), true) : ""}
 <tr class="tot"><td>Resultado del mes</td><td class="r" style="color:${resultado >= 0 ? "#1c6b3e" : "#a82c20"}">${fmt(resultado)}</td></tr>
 </tbody></table>
-<div style="margin-top:10px;font-size:13px;color:#5e4f38">Total: ${nf(totalTnMes)} tn${m3 ? ` · ${nf(aM3(totalTnMes))} m³` : ""} · ${qBruta + qGrillada} bateas · Decisión: ${dec.txt}${m3 ? ` · Precio bruta ${fmt(precioM3(cfg.precioBruta))}/m³` : ""}</div>
+<div style="margin-top:10px;font-size:13px;color:#5e4f38">Total: ${nf(totalTnMes)} tn${m3 ? ` · ${nf(aM3(totalTnMes))} m³` : ""} · ${qBruta + qGrillada} bateas · Decisión: ${dec.txt}</div>
 <div class="ft">Generado con El Retiro · ${new Date().toLocaleDateString("es-AR")}</div>
 <script>window.onload=function(){window.print()}<\/script></body></html>`;
     const w = window.open("", "_blank");
@@ -1383,6 +1383,12 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
 
           {/* Calculadora del mes (plan dual bruta + grillada) */}
           <Section tag="Calculadora" title="Plan del mes">
+            <table style={{ width: "100%", marginBottom: 14 }} className="brk">
+              <tbody>
+                <tr><td>Precio bruta</td><td className="num">{$(cfg.precioBruta)}/tn{pesoM3 > 0 ? ` · ${$(precioM3(cfg.precioBruta))}/m³` : ""}</td></tr>
+                <tr><td>Precio grillada</td><td className="num">{$(cfg.precioGrillada)}/tn{pesoM3 > 0 ? ` · ${$(precioM3(cfg.precioGrillada))}/m³` : ""}</td></tr>
+              </tbody>
+            </table>
             <div style={{ marginBottom: 14 }}>
               <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
                 <span className="label">Bateas bruta / mes</span>
