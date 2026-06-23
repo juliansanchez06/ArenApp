@@ -407,6 +407,7 @@ function AppInner({ user }) {
   const [fFecha, setFFecha] = useState(todayISO());
   const [fModo, setFModo] = useState("bruta");
   const [fBateas, setFBateas] = useState(1);
+  const [fPrecio, setFPrecio] = useState("");          // precio $/tn de la carga (vacío = usa el de supuestos)
   const [fClienteId, setFClienteId] = useState("");
   const [fPalaCliente, setFPalaCliente] = useState(false);
   const [editId, setEditId] = useState(null);        // id del registro en edición (null = alta nueva)
@@ -520,7 +521,12 @@ function AppInner({ user }) {
 
   // Economía de un registro: usa el snapshot inmutable guardado al cargar (r.econ).
   // Para registros viejos sin snapshot, cae a recalcular con cfg actual (compatibilidad).
-  const econDe = (r) => (r && r.econ ? r.econ : calcDia(cfg, r.modo, r.bateas, r.palaCliente));
+  // Cálculo de una carga con su propio precio (si no tiene, usa el de supuestos del modo).
+  const calcCarga = (modo, bateas, palaCliente, precio) => {
+    const p = parseFloat(precio) > 0 ? parseFloat(precio) : (modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
+    return calcDia({ ...cfg, precioBruta: p, precioGrillada: p }, modo, bateas, palaCliente);
+  };
+  const econDe = (r) => (r && r.econ ? r.econ : calcCarga(r.modo, r.bateas, r.palaCliente, r.precio));
 
   // Conversión tn ↔ m³ según el peso específico de la arena (tn/m³).
   const pesoM3 = parseFloat(cfg.pesoM3) || 0;
@@ -692,17 +698,18 @@ function AppInner({ user }) {
 
   function resetFormCarga() {
     setEditId(null); setFFecha(todayISO()); setFModo("bruta");
-    setFBateas(1); setFClienteId(""); setFPalaCliente(false);
+    setFBateas(1); setFPrecio(""); setFClienteId(""); setFPalaCliente(false);
   }
   function registrar() {
     const b = parseFloat(fBateas) || 0;
     if (b <= 0 || !fClienteId) return;
     const cl = clientes.find((c) => String(c.id) === String(fClienteId));
+    const precio = parseFloat(fPrecio) > 0 ? parseFloat(fPrecio) : (fModo === "grillada" ? cfg.precioGrillada : cfg.precioBruta);
     const datos = {
       fecha: fFecha, modo: fModo, bateas: b,
       clienteId: fClienteId, cliente: cl ? cl.nombre : "—",
-      palaCliente: fPalaCliente,
-      econ: calcDia(cfg, fModo, b, fPalaCliente),
+      palaCliente: fPalaCliente, precio,
+      econ: calcCarga(fModo, b, fPalaCliente, precio),
     };
     if (editId) {
       // edición: actualiza en su lugar y vuelve a modo alta
@@ -715,7 +722,7 @@ function AppInner({ user }) {
   }
   function editar(r) {
     setEditId(r.id);
-    setFFecha(r.fecha); setFModo(r.modo); setFBateas(r.bateas);
+    setFFecha(r.fecha); setFModo(r.modo); setFBateas(r.bateas); setFPrecio(r.precio != null ? r.precio : "");
     setFClienteId(r.clienteId || ""); setFPalaCliente(!!r.palaCliente);
     try { document.getElementById("form-registro")?.scrollIntoView({ behavior: "smooth", block: "center" }); } catch {}
   }
@@ -928,10 +935,11 @@ ${cfg.costosFijosMes > 0 ? row("− Otros fijos del mes", "−" + fmt(cfg.costos
   function descartarProgramada(id) { setProgramadas((ps) => ps.filter((p) => p.id !== id)); }
   function registrarProgramada(p) {
     const b = parseFloat(p.bateas) || 0;
+    const precio = p.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta;
     setRegistros((rs) => [
       { id: newId(), fecha: p.fecha, modo: p.modo, bateas: b,
-        clienteId: p.clienteId, cliente: p.cliente, palaCliente: !!p.palaCliente,
-        econ: calcDia(cfg, p.modo, b, p.palaCliente) },
+        clienteId: p.clienteId, cliente: p.cliente, palaCliente: !!p.palaCliente, precio,
+        econ: calcCarga(p.modo, b, p.palaCliente, precio) },
       ...rs,
     ]);
     setProgramadas((ps) => ps.filter((x) => x.id !== p.id));
@@ -1088,6 +1096,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           clienteId: r.clienteId != null ? r.clienteId : "",
           cliente: typeof r.cliente === "string" && r.cliente ? r.cliente : "—",
           palaCliente: !!r.palaCliente,
+          ...(parseFloat(r.precio) > 0 ? { precio: parseFloat(r.precio) } : {}),
           ...(r.econ && typeof r.econ === "object" ? { econ: r.econ } : {}),
         });
       } else descartados++;
@@ -1743,6 +1752,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
               </div>
             </label>
             <Field label="Bateas" value={fBateas} onChange={setFBateas} />
+            <Field label={`Precio (${fModo === "grillada" ? $(cfg.precioGrillada) : $(cfg.precioBruta)})`} value={fPrecio} onChange={setFPrecio} suffix="$/tn" />
             <label style={{ display: "block" }}>
               <span style={{ display: "block", fontSize: 11.5, color: C.ink2, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cliente</span>
               <div className="inputWrap selectWrap">
@@ -1771,7 +1781,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table className="reg">
-                <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>Cliente</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Modo</th><th>Bateas</th><th>Tn</th><th>Precio</th><th>Cliente</th><th style={{ textAlign: "right" }}>Margen</th><th></th></tr></thead>
                 <tbody>
                   {registros.map((r) => {
                     const c = econDe(r);
@@ -1781,6 +1791,7 @@ th.r,td.r{text-align:right}td{padding:8px 6px;border-bottom:1px solid #e7e0d4}td
                         <td data-label="Modo"><span className="pill" style={{ background: r.modo === "grillada" ? `${C.accent}1a` : `${C.ink}0d`, color: r.modo === "grillada" ? C.accent : C.ink }}>{r.modo}</span></td>
                         <td data-label="Bateas" className="num">{r.bateas}</td>
                         <td data-label="Tn" className="num">{N(c.tn)}</td>
+                        <td data-label="Precio" className="num">{$(r.precio || (r.modo === "grillada" ? cfg.precioGrillada : cfg.precioBruta))}</td>
                         <td data-label="Cliente">{r.cliente}</td>
                         <td data-label="Margen" className="num" style={{ textAlign: "right", color: c.margen >= 0 ? C.verde : C.rojo }}>{$(c.margen)}</td>
                         <td data-label="" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
